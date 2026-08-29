@@ -46,6 +46,23 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertEqual(filtered, 2.00, accuracy: 0.015)
     }
 
+    func testVoiceGuidanceWaitsForStableMeaningfulChanges() {
+        var scheduler = VoiceGuidanceScheduler()
+        scheduler.begin(at: 0)
+
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveBack(steps: 5), at: 0.60))
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveBack(steps: 5), at: 1.10))
+        XCTAssertTrue(scheduler.shouldAnnounce(.moveBack(steps: 5), at: 1.50))
+
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveBack(steps: 4), at: 1.60))
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveBack(steps: 4), at: 2.20))
+        XCTAssertTrue(scheduler.shouldAnnounce(.moveBack(steps: 4), at: 4.30))
+
+        XCTAssertFalse(scheduler.shouldAnnounce(.stop, at: 4.40))
+        XCTAssertFalse(scheduler.shouldAnnounce(.stop, at: 4.60))
+        XCTAssertTrue(scheduler.shouldAnnounce(.stop, at: 5.00))
+    }
+
     func testGazeAlignmentAtCameraHasNoAngularError() throws {
         let alignment = try XCTUnwrap(
             GazeAlignmentEngine.errors(

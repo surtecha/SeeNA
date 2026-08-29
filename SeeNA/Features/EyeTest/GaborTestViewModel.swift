@@ -71,20 +71,21 @@ final class GaborTestViewModel: ObservableObject {
         } == true
         let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
             ?? Date().timeIntervalSinceReferenceDate
-        let cue = conditionCue(for: sample)
-            ?? currentDistance.map { DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: 0.40) }
-            ?? .findFace
-        guidanceCue = cue
-        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
-            dependencies.spokenPrompts.speak(cue.spokenText)
-        }
-
         let state = targetTracker.update(
             distance: currentDistance,
             target: 0.40,
             conditionsReady: conditionsReady,
             timestamp: timestamp
         )
+        let cue = conditionCue(for: sample)
+            ?? (state.isInTargetZone ? .stop : currentDistance.map {
+                DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: 0.40)
+            })
+            ?? .findFace
+        guidanceCue = cue
+        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
+            dependencies.spokenPrompts.queueNavigationCue(cue.spokenText)
+        }
         stabilityProgress = state.progress
         if state.isInTargetZone {
             phase = .stabilising
@@ -120,7 +121,7 @@ final class GaborTestViewModel: ObservableObject {
         contrast = level
         targets = (0..<7).map { _ in GaborOrientation.allCases.randomElement() ?? .left }
         phase = .presenting
-        await dependencies.spokenPrompts.speakAndWait(
+        await dependencies.spokenPrompts.speakAfterNavigation(
             "You are in position. Starting now. Seven stripes. Say left or right, in order."
         )
 

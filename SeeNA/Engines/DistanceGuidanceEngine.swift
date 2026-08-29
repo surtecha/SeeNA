@@ -26,11 +26,11 @@ enum DistanceGuidanceCue: Equatable, Hashable, Sendable {
     var spokenText: String {
         switch self {
         case .moveBack(let steps):
-            return "Take about \(Self.numberWord(steps)) small \(steps == 1 ? "step" : "steps") back."
+            return "Take about \(Self.numberWord(steps)) small \(steps == 1 ? "step" : "steps") back, then pause."
         case .moveCloser(let steps):
-            return "Take about \(Self.numberWord(steps)) small \(steps == 1 ? "step" : "steps") towards the phone."
-        case .tinyStepBack: return "Take one tiny step back."
-        case .tinyStepCloser: return "Take one tiny step towards the phone."
+            return "Take about \(Self.numberWord(steps)) small \(steps == 1 ? "step" : "steps") towards the phone, then pause."
+        case .tinyStepBack: return "Take one tiny step back, then pause."
+        case .tinyStepCloser: return "Take one tiny step towards the phone, then pause."
         case .stop: return "Stop."
         case .findFace: return "Move into the centre of the camera view."
         case .waitForPhone: return "Wait for the phone to settle."
@@ -223,21 +223,38 @@ struct DistanceTargetTracker: Sendable {
 struct VoiceGuidanceScheduler: Sendable {
     private var lastCue: DistanceGuidanceCue?
     private var lastAnnouncement: TimeInterval?
+    private var candidateCue: DistanceGuidanceCue?
+    private var candidateSince: TimeInterval?
 
     mutating func begin(at timestamp: TimeInterval) {
         lastCue = nil
         lastAnnouncement = timestamp
+        candidateCue = nil
+        candidateSince = nil
     }
 
     mutating func shouldAnnounce(_ cue: DistanceGuidanceCue, at timestamp: TimeInterval) -> Bool {
-        if cue == .stop, lastCue != .stop {
-            lastCue = cue
-            lastAnnouncement = timestamp
-            return true
+        if candidateCue != cue {
+            candidateCue = cue
+            candidateSince = timestamp
+            return false
         }
 
+        let settledFor = timestamp - (candidateSince ?? timestamp)
+        let requiredSettling = cue == .stop ? 0.18 : 0.45
+        guard settledFor >= requiredSettling else { return false }
+
         let elapsed = timestamp - (lastAnnouncement ?? -Double.infinity)
-        let requiredInterval = cue == lastCue ? 3.5 : 1.15
+        let requiredInterval: TimeInterval
+        if cue == lastCue {
+            requiredInterval = 5.5
+        } else if cue == .stop {
+            requiredInterval = 0.35
+        } else if lastCue == nil {
+            requiredInterval = 1.45
+        } else {
+            requiredInterval = 2.75
+        }
         guard elapsed >= requiredInterval else { return false }
         lastCue = cue
         lastAnnouncement = timestamp
@@ -247,5 +264,7 @@ struct VoiceGuidanceScheduler: Sendable {
     mutating func reset() {
         lastCue = nil
         lastAnnouncement = nil
+        candidateCue = nil
+        candidateSince = nil
     }
 }

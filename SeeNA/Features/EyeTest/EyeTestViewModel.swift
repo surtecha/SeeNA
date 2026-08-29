@@ -98,18 +98,19 @@ final class EyeTestViewModel: ObservableObject {
         } == true
         let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
             ?? Date().timeIntervalSinceReferenceDate
-        let cue = conditionCue(for: sample)
-            ?? currentDistance.map { DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: targetDistance) }
-            ?? .findFace
-        guidanceCue = cue
-        announce(cue, at: timestamp, using: dependencies)
-
         let targetState = targetTracker.update(
             distance: currentDistance,
             target: targetDistance,
             conditionsReady: validPose,
             timestamp: timestamp
         )
+        let cue = conditionCue(for: sample)
+            ?? (targetState.isInTargetZone ? .stop : currentDistance.map {
+                DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: targetDistance)
+            })
+            ?? .findFace
+        guidanceCue = cue
+        announce(cue, at: timestamp, using: dependencies)
         isInTargetZone = targetState.isInTargetZone
         readyProgress = targetState.progress
 
@@ -137,7 +138,7 @@ final class EyeTestViewModel: ObservableObject {
         blockSamples.removeAll(keepingCapacity: true)
         if targets.count != 7 { targets = Self.randomDirections() }
         phase = .presenting
-        await dependencies.spokenPrompts.speakAndWait(
+        await dependencies.spokenPrompts.speakAfterNavigation(
             "You are in position. Starting now. Seven rings. Say the openings from left to right."
         )
 
@@ -317,7 +318,7 @@ final class EyeTestViewModel: ObservableObject {
         using dependencies: AppDependencies
     ) {
         guard voiceScheduler.shouldAnnounce(cue, at: timestamp) else { return }
-        dependencies.spokenPrompts.speak(cue.spokenText)
+        dependencies.spokenPrompts.queueNavigationCue(cue.spokenText)
     }
 
     private func qualityMessage(_ quality: BlockQuality) -> String {

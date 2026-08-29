@@ -287,19 +287,20 @@ final class CalibrationViewModel {
         guidedDistance = distanceFilter.update(measured)
         let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
             ?? Date().timeIntervalSinceReferenceDate
-        let cue = conditionCue(for: sample)
-            ?? guidedDistance.map { DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: 0.40) }
-            ?? .findFace
-        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
-            prompts.speak(cue.spokenText)
-        }
-
         let state = targetTracker.update(
             distance: guidedDistance,
             target: 0.40,
             conditionsReady: trackingReady,
             timestamp: timestamp
         )
+        let cue = conditionCue(for: sample)
+            ?? (state.isInTargetZone ? .stop : guidedDistance.map {
+                DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: 0.40)
+            })
+            ?? .findFace
+        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
+            prompts.queueNavigationCue(cue.spokenText)
+        }
         isInTargetZone = state.isInTargetZone
         targetReady = state.isReady
 
@@ -360,7 +361,7 @@ final class CalibrationViewModel {
         didCapture = true
         HapticFeedback.success()
         Task {
-            await prompts.speakAndWait("Distance saved. Cover your left eye.")
+            await prompts.speakAfterNavigation("Distance saved. Cover your left eye.")
             guard shouldAdvance, session.path.last == .calibration else { return }
             session.navigate(to: .rightEyeInstructions)
         }

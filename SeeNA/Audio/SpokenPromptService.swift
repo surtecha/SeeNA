@@ -12,6 +12,8 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
     private var requestID = UUID()
     private var preloadTasks: [String: Task<Data?, Never>] = [:]
     private var preloadBatchTask: Task<Void, Never>?
+    private var queuedNavigation: (text: String, language: String)?
+    private var navigationWorker: Task<Void, Never>?
 
     init(backend: BackendClient) {
         self.backend = backend
@@ -33,6 +35,26 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         await renderAndPlay(text, language: language, requestID: id)
     }
 
+    /// Navigation updates are coalesced instead of interrupting speech. While
+    /// one cue plays, only the newest pending cue is retained.
+    func queueNavigationCue(_ text: String, language: String = "en-AU") {
+        queuedNavigation = (text, language)
+        guard navigationWorker == nil else { return }
+        navigationWorker = Task { [weak self] in
+            guard let self else { return }
+            await runNavigationQueue()
+            navigationWorker = nil
+        }
+    }
+
+    /// Test instructions must follow the final movement cue, never cut it off.
+    func speakAfterNavigation(_ text: String, language: String = "en-AU") async {
+        if let navigationWorker {
+            await navigationWorker.value
+        }
+        await speakAndWait(text, language: language)
+    }
+
     /// Warms the finite navigation vocabulary while the user completes setup,
     /// so live movement cues keep the natural backend voice without network lag.
     func preloadNavigationGuidance(language: String = "en-AU") {
@@ -43,6 +65,9 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         requestID = UUID()
         playbackTask?.cancel()
         playbackTask = nil
+        navigationWorker?.cancel()
+        navigationWorker = nil
+        queuedNavigation = nil
         audioPlayer?.stop()
         audioPlayer = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
@@ -68,6 +93,22 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         guard !Task.isCancelled, requestID == self.requestID else { return }
         if let data, await play(data: data) { return }
         await speakWithSystemVoice(text, language: language)
+    }
+
+    private func runNavigationQueue() async {
+        while !Task.isCancelled {
+            if let playbackTask {
+                await playbackTask.value
+            }
+            guard !Task.isCancelled else { return }
+            guard let next = queuedNavigation else { return }
+            queuedNavigation = nil
+            requestID = UUID()
+            let id = requestID
+            await renderAndPlay(next.text, language: next.language, requestID: id)
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: 450_000_000)
+        }
     }
 
     private func preload(_ texts: [String], language: String) {
