@@ -1,11 +1,51 @@
 import AVFoundation
 
 @MainActor
-final class SpokenPromptService {
+final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
+    private var pendingContinuation: CheckedContinuation<Void, Never>?
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
 
     func speak(_ text: String, language: String = "en-AU") {
+        cancelPendingSpeech()
+        synthesizer.speak(Self.utterance(text: text, language: language))
+    }
+
+    func speakAndWait(_ text: String, language: String = "en-AU") async {
+        cancelPendingSpeech()
+        await withCheckedContinuation { continuation in
+            pendingContinuation = continuation
+            synthesizer.speak(Self.utterance(text: text, language: language))
+        }
+    }
+
+    func stop() {
+        cancelPendingSpeech()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        resumePendingSpeech()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        resumePendingSpeech()
+    }
+
+    private func cancelPendingSpeech() {
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        resumePendingSpeech()
+    }
+
+    private func resumePendingSpeech() {
+        pendingContinuation?.resume()
+        pendingContinuation = nil
+    }
+
+    private static func utterance(text: String, language: String) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.bestFemaleVoice(language: language)
         utterance.rate = 0.47
@@ -13,11 +53,7 @@ final class SpokenPromptService {
         utterance.volume = 1
         utterance.preUtteranceDelay = 0.08
         utterance.postUtteranceDelay = 0.12
-        synthesizer.speak(utterance)
-    }
-
-    func stop() {
-        synthesizer.stopSpeaking(at: .immediate)
+        return utterance
     }
 
     private static func bestFemaleVoice(language: String) -> AVSpeechSynthesisVoice? {

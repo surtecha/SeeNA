@@ -100,8 +100,7 @@ final class EyeTestViewModel: ObservableObject {
         isRunningBlock = true
         if targets.count != 7 { targets = Self.randomDirections() }
         phase = .presenting
-        dependencies.spokenPrompts.speak("Hold still. Read the seven openings from left to right.")
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        await dependencies.spokenPrompts.speakAndWait("Hold still. Read the seven openings from left to right.")
 
         do {
             phase = .recording
@@ -227,8 +226,7 @@ final class EyeTestViewModel: ObservableObject {
             if eye == .right { session.activeSession.rightEyeResult = result }
             else { session.activeSession.leftEyeResult = result }
             phase = .completed
-            dependencies.spokenPrompts.speak("\(eye.displayName) eye complete.")
-            try? await Task.sleep(nanoseconds: 800_000_000)
+            await dependencies.spokenPrompts.speakAndWait("\(eye.displayName) eye complete.")
             session.navigate(to: eye == .right ? .leftEyeInstructions : .accessibilityIntroduction)
         }
     }

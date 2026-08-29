@@ -43,8 +43,7 @@ private final class AccessibilityAssessmentViewModel: ObservableObject {
         isBusy = true
         message = nil
         do {
-            dependencies.spokenPrompts.speak("Read the sentence aloud when you are ready.")
-            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            await dependencies.spokenPrompts.speakAndWait("Read the sentence aloud when you are ready.")
             let recording = try await dependencies.audioRecorder.record(maximumDuration: 12)
             defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
             guard recording.adequateLevel else {
