@@ -63,6 +63,33 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertTrue(scheduler.shouldAnnounce(.stop, at: 5.00))
     }
 
+    func testVoiceGuidanceSuppressesMovementAndStopAfterTargetAcceptance() {
+        var scheduler = VoiceGuidanceScheduler()
+        scheduler.begin(at: 0)
+        scheduler.acceptTarget()
+
+        XCTAssertFalse(scheduler.shouldAnnounce(.stop, at: 1))
+        XCTAssertFalse(scheduler.shouldAnnounce(.stop, at: 10))
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveBack(steps: 3), at: 11))
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveBack(steps: 3), at: 20))
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveCloser(steps: 2), at: 30))
+    }
+
+    func testVoiceGuidanceResumesOnlyWhenANewPositioningPhaseBegins() {
+        var scheduler = VoiceGuidanceScheduler()
+        scheduler.begin(at: 0)
+        scheduler.acceptTarget()
+
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveCloser(steps: 2), at: 10))
+        scheduler.reset()
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveCloser(steps: 2), at: 20))
+
+        scheduler.begin(at: 30)
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveCloser(steps: 2), at: 30.50))
+        XCTAssertFalse(scheduler.shouldAnnounce(.moveCloser(steps: 2), at: 31.00))
+        XCTAssertTrue(scheduler.shouldAnnounce(.moveCloser(steps: 2), at: 31.50))
+    }
+
     func testGazeAlignmentAtCameraHasNoAngularError() throws {
         let alignment = try XCTUnwrap(
             GazeAlignmentEngine.errors(
@@ -362,6 +389,106 @@ final class MeasurementEngineTests: XCTestCase {
         )
         XCTAssertTrue(quality.isValid)
         XCTAssertTrue(quality.discardReasons.isEmpty)
+    }
+
+    func testBlockMeasurementQualityAcceptsSmallMinorityOfNoisyFrames() throws {
+        var samples = (0..<20).map { index in
+            sample(
+                distance: 2 + Double(index % 3 - 1) * 0.004,
+                standardDeviation: 0.008,
+                tracking: 0.98,
+                stable: true,
+                drift: 0.2,
+                acceleration: 0.004,
+                yaw: 1,
+                pitch: 1,
+                luminance: 0.5,
+                faceCount: 1
+            )
+        }
+        samples.append(sample(
+            distance: 1.2,
+            standardDeviation: 0.3,
+            tracking: 0,
+            stable: false,
+            drift: 5,
+            acceleration: 0.1,
+            yaw: 35,
+            pitch: 35,
+            luminance: 0.02,
+            faceCount: 2
+        ))
+
+        let aggregate = BlockMeasurementQualityEngine.evaluate(
+            samples: samples,
+            targetDistanceMetres: 2,
+            targetToleranceMetres: 0.10,
+            thresholds: .conservative
+        )
+
+        XCTAssertTrue(aggregate.isAccepted)
+        XCTAssertEqual(try XCTUnwrap(aggregate.medianDistanceMetres), 2, accuracy: 0.005)
+        XCTAssertLessThan(try XCTUnwrap(aggregate.distanceStandardDeviationMetres), 0.01)
+    }
+
+    func testBlockMeasurementQualityRejectsSustainedMovement() {
+        let samples = (0..<20).map { index in
+            let moved = index >= 11
+            return sample(
+                distance: moved ? 1.72 + Double(index - 11) * 0.01 : 2,
+                standardDeviation: moved ? 0.08 : 0.008,
+                tracking: 0.98,
+                stable: !moved,
+                drift: moved ? 4 : 0.2,
+                acceleration: moved ? 0.06 : 0.004,
+                yaw: 1,
+                pitch: 1,
+                luminance: 0.5,
+                faceCount: 1
+            )
+        }
+
+        let aggregate = BlockMeasurementQualityEngine.evaluate(
+            samples: samples,
+            targetDistanceMetres: 2,
+            targetToleranceMetres: 0.10,
+            thresholds: .conservative
+        )
+
+        XCTAssertFalse(aggregate.isAccepted)
+        XCTAssertTrue(aggregate.issues.contains(.phoneMoved))
+        XCTAssertTrue(aggregate.issues.contains(.distanceOffTarget))
+    }
+
+    func testBlockMeasurementQualityRejectsPersistentPoorConditions() {
+        let samples = (0..<20).map { index in
+            let poor = index >= 14
+            return sample(
+                distance: 2,
+                standardDeviation: 0.008,
+                tracking: poor ? 0.20 : 0.98,
+                stable: true,
+                drift: 0.2,
+                acceleration: 0.004,
+                yaw: poor ? 30 : 1,
+                pitch: poor ? 30 : 1,
+                luminance: poor ? 0.03 : 0.5,
+                faceCount: poor ? 2 : 1
+            )
+        }
+
+        let aggregate = BlockMeasurementQualityEngine.evaluate(
+            samples: samples,
+            targetDistanceMetres: 2,
+            targetToleranceMetres: 0.10,
+            thresholds: .conservative
+        )
+
+        XCTAssertFalse(aggregate.isAccepted)
+        XCTAssertTrue(aggregate.issues.contains(.trackingUnreliable))
+        XCTAssertTrue(aggregate.issues.contains(.headPose))
+        XCTAssertTrue(aggregate.issues.contains(.poorLighting))
+        XCTAssertTrue(aggregate.issues.contains(.multipleFaces))
     }
 
     func testCalibrationRejectsMissingDistanceAndPoorFit() throws {

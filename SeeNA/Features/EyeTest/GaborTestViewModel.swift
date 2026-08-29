@@ -40,6 +40,11 @@ final class GaborTestViewModel: ObservableObject {
     private var targetTracker = DistanceTargetTracker()
     private var voiceScheduler = VoiceGuidanceScheduler()
     private var blockLaunchPending = false
+    private var positioningAccepted = false
+    private var mostRecentSample: DistanceSample?
+    private var blockSamples: [DistanceSample] = []
+    private var isCollectingMeasurementSamples = false
+    private var needsPositionRecheck = false
 
     init(eye: Eye) {
         self.eye = eye
@@ -50,6 +55,7 @@ final class GaborTestViewModel: ObservableObject {
         guard !announcedMove else { return }
         announcedMove = true
         dependencies.spokenPrompts.preloadNavigationGuidance()
+        dependencies.spokenPrompts.beginNavigationGuidance()
         voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
         dependencies.spokenPrompts.speak(
             "Keep that eye covered. Walk towards the phone. I will tell you when to stop."
@@ -57,11 +63,16 @@ final class GaborTestViewModel: ObservableObject {
     }
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
+        mostRecentSample = sample
+        if isCollectingMeasurementSamples, let sample {
+            blockSamples.append(sample)
+            if blockSamples.count > 900 { blockSamples.removeFirst(blockSamples.count - 900) }
+        }
         let measured = sample.flatMap {
             $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
         }
         currentDistance = distanceFilter.update(measured)
-        guard !isRunning, !blockLaunchPending else { return }
+        guard !isRunning, !blockLaunchPending, !positioningAccepted else { return }
         let conditionsReady = sample.map {
             $0.faceCount == 1
                 && $0.phoneStable
@@ -83,18 +94,21 @@ final class GaborTestViewModel: ObservableObject {
             })
             ?? .findFace
         guidanceCue = cue
-        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
+        if cue != .stop, voiceScheduler.shouldAnnounce(cue, at: timestamp) {
             dependencies.spokenPrompts.queueNavigationCue(cue.spokenText)
         }
         stabilityProgress = state.progress
         if state.isInTargetZone {
             phase = .stabilising
             if state.isReady {
+                positioningAccepted = true
+                guidanceCue = .stop
+                voiceScheduler.acceptTarget()
                 targetTracker.reset()
                 stabilityProgress = 0
                 blockLaunchPending = true
                 HapticFeedback.success()
-                Task { await runBlock(dependencies: dependencies, session: session) }
+                Task { await runBlock(start: .acceptedPosition, dependencies: dependencies, session: session) }
             }
         } else {
             stabilityProgress = 0
@@ -104,10 +118,33 @@ final class GaborTestViewModel: ObservableObject {
     }
 
     func repeatBlock(dependencies: AppDependencies, session: AppSession) async {
-        await runBlock(dependencies: dependencies, session: session)
+        if needsPositionRecheck {
+            needsPositionRecheck = false
+            positioningAccepted = false
+            targets = []
+            phase = .moving
+            targetTracker.reset()
+            voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
+            dependencies.spokenPrompts.beginNavigationGuidance()
+            dependencies.spokenPrompts.speak(
+                "Let’s reset your position. I will guide you to forty centimetres."
+            )
+            return
+        }
+        await runBlock(start: .retry, dependencies: dependencies, session: session)
     }
 
-    private func runBlock(dependencies: AppDependencies, session: AppSession) async {
+    private enum BlockStart {
+        case acceptedPosition
+        case nextRow
+        case retry
+    }
+
+    private func runBlock(
+        start: BlockStart,
+        dependencies: AppDependencies,
+        session: AppSession
+    ) async {
         guard !isRunning else {
             blockLaunchPending = false
             return
@@ -118,16 +155,54 @@ final class GaborTestViewModel: ObservableObject {
         }
         blockLaunchPending = false
         isRunning = true
+        blockSamples.removeAll(keepingCapacity: true)
+        isCollectingMeasurementSamples = true
         contrast = level
         targets = (0..<7).map { _ in GaborOrientation.allCases.randomElement() ?? .left }
         phase = .presenting
-        await dependencies.spokenPrompts.speakAfterNavigation(
-            "You are in position. Starting now. Seven stripes. Say left or right, in order."
-        )
+        switch start {
+        case .acceptedPosition:
+            let countdownCompleted = await SpokenTestCountdown.fromAcceptedPosition(
+                prompts: dependencies.spokenPrompts,
+                responseInstruction: "Say left or right for each of the seven stripes.",
+                positionIsValid: { [weak self] in self?.positionIsAcceptable() == true }
+            )
+            guard countdownCompleted else {
+                isCollectingMeasurementSamples = false
+                isRunning = false
+                positioningAccepted = false
+                targets = []
+                phase = .moving
+                targetTracker.reset()
+                voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
+                dependencies.spokenPrompts.beginNavigationGuidance()
+                return
+            }
+        case .nextRow:
+            guard await SpokenTestCountdown.nextRow(
+                prompts: dependencies.spokenPrompts,
+                responseInstruction: "Say left or right for each stripe."
+            ) else {
+                isCollectingMeasurementSamples = false
+                isRunning = false
+                return
+            }
+        case .retry:
+            guard await SpokenTestCountdown.nextRow(
+                prompts: dependencies.spokenPrompts,
+                responseInstruction: "Say left or right for each stripe.",
+                isRetry: true
+            ) else {
+                isCollectingMeasurementSamples = false
+                isRunning = false
+                return
+            }
+        }
 
         do {
             phase = .recording
             let recording = try await dependencies.audioRecorder.record()
+            isCollectingMeasurementSamples = false
             defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
             guard recording.adequateLevel else {
                 retry("I could not hear you clearly. Say seven answers, left or right.")
@@ -144,6 +219,18 @@ final class GaborTestViewModel: ObservableObject {
                   directions.count == 7,
                   directions.allSatisfy({ $0 == .left || $0 == .right }) else {
                 retry("Please say exactly seven answers using only left or right.")
+                return
+            }
+
+            let aggregate = BlockMeasurementQualityEngine.evaluate(
+                samples: blockSamples,
+                targetDistanceMetres: 0.40,
+                targetToleranceMetres: DistanceGuidanceEngine.exitTolerance(for: 0.40),
+                thresholds: session.activeSession.deviceProfile?.qualityThresholds ?? .conservative
+            )
+            guard aggregate.isAccepted else {
+                needsPositionRecheck = true
+                retry("Your position changed during the row. Recheck position and try again.")
                 return
             }
 
@@ -171,7 +258,7 @@ final class GaborTestViewModel: ObservableObject {
             targets = []
             switch action {
             case .test:
-                await runBlock(dependencies: dependencies, session: session)
+                await runBlock(start: .nextRow, dependencies: dependencies, session: session)
             case .completed(let result):
                 if eye == .right { session.activeSession.rightGaborResult = result }
                 else { session.activeSession.leftGaborResult = result }
@@ -180,13 +267,16 @@ final class GaborTestViewModel: ObservableObject {
                 session.navigate(to: eye == .right ? .leftEyeInstructions : .processing)
             }
         } catch is CancellationError {
+            isCollectingMeasurementSamples = false
             isRunning = false
         } catch {
+            isCollectingMeasurementSamples = false
             retry("The voice service was interrupted. Let’s try that row again.")
         }
     }
 
     private func retry(_ message: String) {
+        isCollectingMeasurementSamples = false
         isRunning = false
         phase = .retry(message)
     }
@@ -200,5 +290,19 @@ final class GaborTestViewModel: ObservableObject {
             return .facePhone
         }
         return nil
+    }
+
+    private func positionIsAcceptable() -> Bool {
+        guard let sample = mostRecentSample,
+              let currentDistance,
+              sample.faceCount == 1,
+              sample.phoneStable,
+              sample.luminance >= 0.12,
+              abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees,
+              abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees else {
+            return false
+        }
+        return abs(currentDistance - 0.40)
+            <= DistanceGuidanceEngine.exitTolerance(for: 0.40)
     }
 }

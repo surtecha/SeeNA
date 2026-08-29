@@ -86,6 +86,7 @@ final class PhoneSetupViewModel {
     private var announcedReady = false
     private var readySince: Date?
     private var isAdvancing = false
+    private var hasStarted = false
 
     private let sensors: SensorCoordinator
     private let prompts: SpokenPromptService
@@ -122,7 +123,7 @@ final class PhoneSetupViewModel {
 
     var primaryTitle: String { isLocked ? "Continue" : "Lock position" }
     var primarySystemImage: String { isLocked ? "arrow.right" : "lock" }
-    var primaryEnabled: Bool { isReady }
+    var primaryEnabled: Bool { isReady && !isAdvancing }
 
     var gazeOffset: CGSize {
         guard let sample else { return .zero }
@@ -133,6 +134,8 @@ final class PhoneSetupViewModel {
     }
 
     func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
         sensors.start()
         prompts.preloadNavigationGuidance()
         prompts.speak("Set the phone upright at eye level. Step into view, then let go.")
@@ -172,10 +175,11 @@ final class PhoneSetupViewModel {
             return
         }
 
-        guard isReady else {
+        guard isReady, !isAdvancing else {
             HapticFeedback.warning()
             return
         }
+        isAdvancing = true
         sensors.lockPhoneReference()
         isLocked = true
         HapticFeedback.impact(.rigid)
@@ -215,6 +219,7 @@ final class CalibrationViewModel {
     private var distanceFilter = RobustDistanceFilter()
     private var targetTracker = DistanceTargetTracker()
     private var voiceScheduler = VoiceGuidanceScheduler()
+    private var hasStarted = false
 
     private let sensors: SensorCoordinator
     private let prompts: SpokenPromptService
@@ -269,12 +274,15 @@ final class CalibrationViewModel {
 
     var primaryTitle: String { didCapture ? "Continue" : "Capture 40 cm" }
     var primarySystemImage: String { didCapture ? "arrow.right" : "scope" }
-    var primaryEnabled: Bool { didCapture || isReady }
+    var primaryEnabled: Bool { didCapture ? !isAdvancing : isReady && !isAdvancing }
 
     func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
         brightness.applyScreeningBrightness()
         sensors.start()
         prompts.preloadNavigationGuidance()
+        prompts.beginNavigationGuidance()
         voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
         prompts.speak("Step into view. I will guide you to forty centimetres.")
     }
@@ -285,6 +293,7 @@ final class CalibrationViewModel {
             $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
         }
         guidedDistance = distanceFilter.update(measured)
+        guard !didCapture, !isAdvancing else { return }
         let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
             ?? Date().timeIntervalSinceReferenceDate
         let state = targetTracker.update(
@@ -319,6 +328,7 @@ final class CalibrationViewModel {
 
     func primaryAction(session: AppSession) {
         if didCapture {
+            guard !isAdvancing else { return }
             HapticFeedback.impact()
             session.navigate(to: .rightEyeInstructions)
             return
@@ -329,6 +339,7 @@ final class CalibrationViewModel {
     func replayGuide() {
         HapticFeedback.selection()
         voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
+        prompts.beginNavigationGuidance()
         prompts.speak("I will guide you to forty centimetres. Face the phone and follow the voice.")
     }
 
@@ -344,10 +355,11 @@ final class CalibrationViewModel {
     }
 
     private func capture(session: AppSession, shouldAdvance: Bool) {
-        guard isReady else {
+        guard isReady, !didCapture else {
             HapticFeedback.warning()
             return
         }
+        isAdvancing = true
         guard sensors.captureBaseline() else {
             isAdvancing = false
             targetReady = false
@@ -359,9 +371,11 @@ final class CalibrationViewModel {
         }
         session.activeSession.baselineDistanceMetres = measuredDistance
         didCapture = true
+        voiceScheduler.acceptTarget()
         HapticFeedback.success()
         Task {
             await prompts.speakAfterNavigation("Distance saved. Cover your left eye.")
+            isAdvancing = false
             guard shouldAdvance, session.path.last == .calibration else { return }
             session.navigate(to: .rightEyeInstructions)
         }

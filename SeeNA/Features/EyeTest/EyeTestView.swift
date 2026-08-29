@@ -83,7 +83,7 @@ struct EyeTestView: View {
                 if !model.targets.isEmpty, let geometry {
                     LandoltRowView(geometry: geometry, directions: model.targets)
                 }
-                Button("Repeat voice recording") {
+                Button(model.retryButtonTitle) {
                     Task { await model.repeatVoice(dependencies: dependencies, session: session) }
                 }
                 .buttonStyle(PrimaryActionStyle())
@@ -138,7 +138,7 @@ struct EyeTestView: View {
     private var geometry: OptotypeGeometry? {
         guard let profile = session.activeSession.deviceProfile else { return nil }
         return OptotypeGeometry.calculate(
-            distanceMetres: currentDistance ?? model.targetDistance,
+            distanceMetres: model.presentationDistance,
             pixelsPerInch: profile.pixelsPerInch,
             displayScale: profile.displayScale
         )

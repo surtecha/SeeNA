@@ -225,15 +225,28 @@ struct VoiceGuidanceScheduler: Sendable {
     private var lastAnnouncement: TimeInterval?
     private var candidateCue: DistanceGuidanceCue?
     private var candidateSince: TimeInterval?
+    private var isSuspended = false
 
     mutating func begin(at timestamp: TimeInterval) {
+        isSuspended = false
         lastCue = nil
         lastAnnouncement = timestamp
         candidateCue = nil
         candidateSince = nil
     }
 
+    /// Ends the current positioning phase. Once the target has been accepted,
+    /// stale sensor frames must not restart movement guidance while the test is
+    /// counting down or presenting targets. Only `begin(at:)` opens a new phase.
+    mutating func acceptTarget() {
+        isSuspended = true
+        candidateCue = nil
+        candidateSince = nil
+    }
+
     mutating func shouldAnnounce(_ cue: DistanceGuidanceCue, at timestamp: TimeInterval) -> Bool {
+        guard !isSuspended else { return false }
+
         if candidateCue != cue {
             candidateCue = cue
             candidateSince = timestamp

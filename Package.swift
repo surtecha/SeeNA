@@ -32,6 +32,7 @@ let package = Package(
             ],
             sources: [
                 "Models/DomainModels.swift",
+                "Engines/BlockMeasurementQuality.swift",
                 "Engines/DistanceGuidanceEngine.swift",
                 "Engines/FaceAlignmentEngine.swift",
                 "Engines/MeasurementEngines.swift",

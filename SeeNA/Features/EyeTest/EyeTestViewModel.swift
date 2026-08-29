@@ -49,6 +49,11 @@ final class EyeTestViewModel: ObservableObject {
     private var voiceScheduler = VoiceGuidanceScheduler()
     private var blockLaunchPending = false
     private var blockSamples: [DistanceSample] = []
+    private var hasBegun = false
+    private var positioningAccepted = false
+    private var needsPositionRecheck = false
+    private var lockedPresentationDistance: Double?
+    private var isCollectingMeasurementSamples = false
 
     init(eye: Eye) {
         self.eye = eye
@@ -69,8 +74,20 @@ final class EyeTestViewModel: ObservableObject {
 
     var targetDistance: Double { candidate?.distanceMetres ?? 0 }
 
+    /// Freeze the rendered optotype size once position is accepted. Live sensor
+    /// jitter is still recorded for quality checks, but can no longer resize the
+    /// row while the participant is trying to answer it.
+    var presentationDistance: Double {
+        lockedPresentationDistance ?? currentDistance ?? targetDistance
+    }
+
+    var retryButtonTitle: String {
+        needsPositionRecheck ? "Recheck position" : "Repeat voice response"
+    }
+
     func begin(using dependencies: AppDependencies) {
-        guard candidate != nil else { return }
+        guard !hasBegun, candidate != nil else { return }
+        hasBegun = true
         phase = .guiding
         dependencies.spokenPrompts.preloadNavigationGuidance()
         announceGuidance(using: dependencies)
@@ -78,7 +95,7 @@ final class EyeTestViewModel: ObservableObject {
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
         mostRecentSample = sample
-        if isRunningBlock, let sample {
+        if isCollectingMeasurementSamples, let sample {
             blockSamples.append(sample)
             if blockSamples.count > 900 { blockSamples.removeFirst(blockSamples.count - 900) }
         }
@@ -87,7 +104,10 @@ final class EyeTestViewModel: ObservableObject {
             $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
         }
         currentDistance = distanceFilter.update(measured)
-        guard !isRunningBlock, !blockLaunchPending, candidate != nil else { return }
+        guard !isRunningBlock,
+              !blockLaunchPending,
+              !positioningAccepted,
+              candidate != nil else { return }
 
         let validPose = sample.map {
             $0.faceCount == 1
@@ -110,13 +130,22 @@ final class EyeTestViewModel: ObservableObject {
             })
             ?? .findFace
         guidanceCue = cue
-        announce(cue, at: timestamp, using: dependencies)
+        // The guaranteed final "Stop" belongs to the countdown sequence. Do
+        // not queue a second stop prompt while the short stability hold runs.
+        if cue != .stop {
+            announce(cue, at: timestamp, using: dependencies)
+        }
         isInTargetZone = targetState.isInTargetZone
         readyProgress = targetState.progress
 
         if targetState.isInTargetZone {
             phase = .stabilising
             if targetState.isReady {
+                positioningAccepted = true
+                needsPositionRecheck = false
+                lockedPresentationDistance = currentDistance ?? targetDistance
+                guidanceCue = .stop
+                voiceScheduler.acceptTarget()
                 targetTracker.reset()
                 readyProgress = 0
                 blockLaunchPending = true
@@ -136,18 +165,32 @@ final class EyeTestViewModel: ObservableObject {
         blockLaunchPending = false
         isRunningBlock = true
         blockSamples.removeAll(keepingCapacity: true)
+        isCollectingMeasurementSamples = true
         if targets.count != 7 { targets = Self.randomDirections() }
         phase = .presenting
-        await dependencies.spokenPrompts.speakAfterNavigation(
-            "You are in position. Starting now. Seven rings. Say the openings from left to right."
+        let countdownCompleted = await SpokenTestCountdown.fromAcceptedPosition(
+            prompts: dependencies.spokenPrompts,
+            responseInstruction: "Say the seven ring openings from left to right.",
+            positionIsValid: { [weak self] in self?.positionIsAcceptable() == true }
         )
+        guard countdownCompleted else {
+            isCollectingMeasurementSamples = false
+            isRunningBlock = false
+            positioningAccepted = false
+            lockedPresentationDistance = nil
+            phase = .guiding
+            announceGuidance(using: dependencies)
+            return
+        }
 
         do {
             phase = .recording
             let recording = try await dependencies.audioRecorder.record()
+            isCollectingMeasurementSamples = false
             defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
             guard recording.adequateLevel else {
                 phase = .retry("The recording was too quiet. Speak the seven directions clearly.")
+                needsPositionRecheck = false
                 isRunningBlock = false
                 return
             }
@@ -156,6 +199,7 @@ final class EyeTestViewModel: ObservableObject {
             lastTranscript = response.transcript
             guard response.valid, let directions = response.directions, directions.count == 7 else {
                 phase = .retry(response.failureReason ?? "I could not recover exactly seven directions.")
+                needsPositionRecheck = false
                 isRunningBlock = false
                 return
             }
@@ -168,9 +212,12 @@ final class EyeTestViewModel: ObservableObject {
                 session: session
             )
         } catch is CancellationError {
+            isCollectingMeasurementSamples = false
             isRunningBlock = false
         } catch {
+            isCollectingMeasurementSamples = false
             phase = .retry("Voice transcription is unavailable. Repeat or use operator input.")
+            needsPositionRecheck = false
             isRunningBlock = false
         }
     }
@@ -197,6 +244,14 @@ final class EyeTestViewModel: ObservableObject {
     }
 
     func repeatVoice(dependencies: AppDependencies, session: AppSession) async {
+        if needsPositionRecheck {
+            needsPositionRecheck = false
+            positioningAccepted = false
+            lockedPresentationDistance = nil
+            phase = .guiding
+            announceGuidance(using: dependencies)
+            return
+        }
         await runVoiceBlock(dependencies: dependencies, session: session)
     }
 
@@ -208,18 +263,23 @@ final class EyeTestViewModel: ObservableObject {
         dependencies: AppDependencies,
         session: AppSession
     ) async {
-        let capturedDistances = Statistics.rejectOutliersMAD(
-            blockSamples.compactMap {
-                $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
-            }
-        )
         guard let candidate,
               let profile = session.activeSession.deviceProfile,
-              let sample = mostRecentSample,
-              let actualDistance = Statistics.median(capturedDistances)
-                ?? sample.correctedDistanceMetres
-                ?? sample.fusedDistanceMetres else {
+              !blockSamples.isEmpty else {
             phase = .retry("Distance tracking was lost. Return to the target distance.")
+            needsPositionRecheck = true
+            isRunningBlock = false
+            return
+        }
+        let aggregate = BlockMeasurementQualityEngine.evaluate(
+            samples: blockSamples,
+            targetDistanceMetres: candidate.distanceMetres,
+            targetToleranceMetres: DistanceGuidanceEngine.exitTolerance(for: candidate.distanceMetres),
+            thresholds: profile.qualityThresholds
+        )
+        guard let actualDistance = aggregate.medianDistanceMetres else {
+            phase = .retry("Distance tracking was lost. Return to the target distance.")
+            needsPositionRecheck = true
             isRunningBlock = false
             return
         }
@@ -229,13 +289,11 @@ final class EyeTestViewModel: ObservableObject {
             pixelsPerInch: profile.pixelsPerInch,
             displayScale: profile.displayScale
         )
-        let quality = QualityGateEngine.evaluate(
-            sample: sample,
+        let quality = blockQuality(
+            aggregate: aggregate,
             responseCount: responses.count,
             audioLevelAdequate: audioLevelAdequate,
-            targetGeometryValid: geometry != nil,
-            orientationChanged: false,
-            thresholds: profile.qualityThresholds
+            targetGeometryValid: geometry != nil
         )
         let correct = TrialScorer.correctCount(targets: targets, responses: responses)
         let outcome = quality.isValid
@@ -246,9 +304,7 @@ final class EyeTestViewModel: ObservableObject {
             candidateDiopter: candidate.diopter,
             targetDistanceMetres: candidate.distanceMetres,
             actualMedianDistanceMetres: actualDistance,
-            distanceStandardDeviation: Statistics.standardDeviation(capturedDistances)
-                ?? sample.distanceStandardDeviation
-                ?? .infinity,
+            distanceStandardDeviation: aggregate.distanceStandardDeviationMetres ?? .infinity,
             targets: targets,
             responses: responses,
             correctCount: correct,
@@ -270,7 +326,15 @@ final class EyeTestViewModel: ObservableObject {
         switch action {
         case .test:
             phase = quality.isValid ? .guiding : .retry(qualityMessage(quality))
-            if quality.isValid { announceGuidance(using: dependencies) }
+            if quality.isValid {
+                positioningAccepted = false
+                lockedPresentationDistance = nil
+                announceGuidance(using: dependencies)
+            } else {
+                // Do not restart movement speech behind the retry screen. The
+                // participant explicitly chooses when to recheck position.
+                needsPositionRecheck = true
+            }
         case .completed(let result):
             if eye == .right { session.activeSession.rightEyeResult = result }
             else { session.activeSession.leftEyeResult = result }
@@ -281,11 +345,15 @@ final class EyeTestViewModel: ObservableObject {
     }
 
     private func announceGuidance(using dependencies: AppDependencies) {
+        positioningAccepted = false
+        needsPositionRecheck = false
+        lockedPresentationDistance = nil
         targetTracker.reset()
         readyProgress = 0
         isInTargetZone = false
         let now = Date().timeIntervalSinceReferenceDate
         voiceScheduler.begin(at: now)
+        dependencies.spokenPrompts.beginNavigationGuidance()
 
         let movement: String
         if let currentDistance,
@@ -312,6 +380,20 @@ final class EyeTestViewModel: ObservableObject {
         return nil
     }
 
+    private func positionIsAcceptable() -> Bool {
+        guard let sample = mostRecentSample,
+              let currentDistance,
+              sample.faceCount == 1,
+              sample.phoneStable,
+              sample.luminance >= 0.12,
+              abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees,
+              abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees else {
+            return false
+        }
+        return abs(currentDistance - targetDistance)
+            <= DistanceGuidanceEngine.exitTolerance(for: targetDistance)
+    }
+
     private func announce(
         _ cue: DistanceGuidanceCue,
         at timestamp: TimeInterval,
@@ -334,6 +416,31 @@ final class EyeTestViewModel: ObservableObject {
         case .poorLighting: return "Turn on another light and repeat."
         case .serviceUnavailable: return "The voice service is unavailable."
         }
+    }
+
+    private func blockQuality(
+        aggregate: BlockMeasurementQuality,
+        responseCount: Int,
+        audioLevelAdequate: Bool,
+        targetGeometryValid: Bool
+    ) -> BlockQuality {
+        var reasons = aggregate.blockDiscardReasons
+        if responseCount != 7 { reasons.append(.responseCount) }
+        if !audioLevelAdequate { reasons.append(.audioLevel) }
+        if !targetGeometryValid { reasons.append(.targetGeometry) }
+        reasons = Array(Set(reasons)).sorted { $0.rawValue < $1.rawValue }
+
+        return BlockQuality(
+            trackingCoverage: aggregate.trackingCoverage,
+            phoneStable: !aggregate.issues.contains(.phoneMoved),
+            headPoseValid: !aggregate.issues.contains(.headPose),
+            distanceStable: !aggregate.issues.contains(where: {
+                [.insufficientSamples, .distanceUnavailable, .distanceOffTarget, .distanceUnstable].contains($0)
+            }),
+            audioLevelAdequate: audioLevelAdequate,
+            targetGeometryValid: targetGeometryValid,
+            discardReasons: reasons
+        )
     }
 
     private static func randomDirections() -> [OptotypeDirection] {
