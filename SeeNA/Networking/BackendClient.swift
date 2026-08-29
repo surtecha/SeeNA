@@ -1,20 +1,20 @@
 import Foundation
 
 struct NetworkConfiguration: Sendable {
-    let baseURL: URL
+    let baseURL: URL?
     let appToken: String
 
     static var bundle: NetworkConfiguration {
         let rawURL = Bundle.main.object(forInfoDictionaryKey: "SEENA_BACKEND_URL") as? String
         let token = Bundle.main.object(forInfoDictionaryKey: "SEENA_APP_TOKEN") as? String
         return NetworkConfiguration(
-            baseURL: URL(string: rawURL ?? "https://replace-after-preview-deploy.invalid")!,
+            baseURL: rawURL.flatMap(URL.init(string:)),
             appToken: token ?? "seena-v0-prototype"
         )
     }
 
     static let unavailable = NetworkConfiguration(
-        baseURL: URL(string: "https://unavailable.invalid")!,
+        baseURL: nil,
         appToken: "preview"
     )
 }
@@ -99,7 +99,7 @@ actor BackendClient {
         if let choiceSetID { body.appendMultipartField(name: "choiceSetId", value: choiceSetID, boundary: boundary) }
         let audio = try Data(contentsOf: audioURL)
         body.appendMultipartFile(name: "audio", filename: "response.m4a", mimeType: "audio/mp4", data: audio, boundary: boundary)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append(Data("--\(boundary)--\r\n".utf8))
 
         var request = try makeRequest(path: "/api/transcribe-block", method: "POST")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -125,7 +125,11 @@ actor BackendClient {
     }
 
     private func makeRequest(path: String, method: String) throws -> URLRequest {
-        guard let url = URL(string: path, relativeTo: configuration.baseURL) else { throw BackendError.invalidConfiguration }
+        guard let baseURL = configuration.baseURL,
+              baseURL.scheme == "https",
+              let url = URL(string: path, relativeTo: baseURL) else {
+            throw BackendError.invalidConfiguration
+        }
         var request = URLRequest(url: url, timeoutInterval: 24)
         request.httpMethod = method
         request.setValue(configuration.appToken, forHTTPHeaderField: "X-SEENA-App-Token")
@@ -174,16 +178,16 @@ actor BackendClient {
 
 private extension Data {
     mutating func appendMultipartField(name: String, value: String, boundary: String) {
-        append("--\(boundary)\r\n".data(using: .utf8)!)
-        append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-        append("\(value)\r\n".data(using: .utf8)!)
+        append(Data("--\(boundary)\r\n".utf8))
+        append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+        append(Data("\(value)\r\n".utf8))
     }
 
     mutating func appendMultipartFile(name: String, filename: String, mimeType: String, data: Data, boundary: String) {
-        append("--\(boundary)\r\n".data(using: .utf8)!)
-        append("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-        append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        append(Data("--\(boundary)\r\n".utf8))
+        append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".utf8))
+        append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
         append(data)
-        append("\r\n".data(using: .utf8)!)
+        append(Data("\r\n".utf8))
     }
 }

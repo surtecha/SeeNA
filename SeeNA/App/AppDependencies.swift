@@ -9,6 +9,7 @@ final class AppDependencies: ObservableObject {
     let audioRecorder: AudioBlockRecorder
     let spokenPrompts: SpokenPromptService
     let backend: BackendClient
+    let network: NetworkReachabilityService
     let brightness: BrightnessManager
 
     init(
@@ -18,6 +19,7 @@ final class AppDependencies: ObservableObject {
         audioRecorder: AudioBlockRecorder,
         spokenPrompts: SpokenPromptService,
         backend: BackendClient,
+        network: NetworkReachabilityService,
         brightness: BrightnessManager
     ) {
         self.profileRegistry = profileRegistry
@@ -26,6 +28,7 @@ final class AppDependencies: ObservableObject {
         self.audioRecorder = audioRecorder
         self.spokenPrompts = spokenPrompts
         self.backend = backend
+        self.network = network
         self.brightness = brightness
     }
 
@@ -38,6 +41,7 @@ final class AppDependencies: ObservableObject {
             audioRecorder: AudioBlockRecorder(),
             spokenPrompts: SpokenPromptService(),
             backend: BackendClient(configuration: .bundle),
+            network: NetworkReachabilityService(),
             brightness: BrightnessManager()
         )
     }
@@ -51,6 +55,7 @@ final class AppDependencies: ObservableObject {
             audioRecorder: AudioBlockRecorder(),
             spokenPrompts: SpokenPromptService(),
             backend: BackendClient(configuration: .unavailable),
+            network: NetworkReachabilityService(),
             brightness: BrightnessManager(isEnabled: false)
         )
     }

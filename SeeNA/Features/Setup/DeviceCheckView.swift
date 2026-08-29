@@ -39,6 +39,13 @@ struct DeviceCheckView: View {
                 detail: AVAudioSession.sharedInstance().recordPermission == .granted ? "Ready" : "Voice permission not granted",
                 state: AVAudioSession.sharedInstance().recordPermission == .granted ? .ready : .warning
             )
+            StatusRow(
+                title: "Internet for voice transcription",
+                detail: dependencies.network.isConnected
+                    ? (dependencies.network.usesExpensiveInterface ? "Connected using mobile data" : "Connected")
+                    : "Offline — operator response fallback remains available",
+                state: dependencies.network.isConnected ? .ready : .warning
+            )
 
             Text(outcomeText)
                 .font(.body.weight(.semibold))

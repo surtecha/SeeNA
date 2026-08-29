@@ -47,10 +47,22 @@ export function normalizedTokens(text: string): string[] {
 }
 
 export function parseDirections(text: string): Direction[] {
-  return normalizedTokens(text).flatMap((token) => {
+  return analyzeDirectionTranscript(text).directions;
+}
+
+export function analyzeDirectionTranscript(text: string): {
+  directions: Direction[];
+  unknownTokens: string[];
+} {
+  const tokens = normalizedTokens(text);
+  const parsed = tokens.flatMap((token) => {
     const parsed = directionSynonyms[token];
     return parsed ? [parsed] : [];
   });
+  return {
+    directions: parsed,
+    unknownTokens: tokens.filter((token) => directionSynonyms[token] === undefined)
+  };
 }
 
 export type ChoiceSetID = "contrast" | "controls" | "readAloud" | "simplified";

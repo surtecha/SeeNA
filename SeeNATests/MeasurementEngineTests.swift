@@ -173,6 +173,92 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertFalse(profile.simplifiedContentEnabled)
     }
 
+    func testStatisticsAndDistanceFusionRejectNoise() throws {
+        XCTAssertEqual(Statistics.median([9, 1, 5, 3]), 4)
+        XCTAssertEqual(try XCTUnwrap(Statistics.standardDeviation([1, 1, 1])), 0, accuracy: 0.000_001)
+        XCTAssertEqual(Statistics.rejectOutliersMAD([1.0, 1.01, 0.99, 4.0]).count, 3)
+
+        var fusion = DistanceFusionEngine(windowSize: 12)
+        fusion.setBaseline(arDistance: 0.4, interEyePixels: 200)
+        let estimate = fusion.estimate(rawARDistance: 0.8, interEyePixels: 100, yawDegrees: 0, profile: nil)
+        XCTAssertEqual(try XCTUnwrap(estimate.relative), 0.8, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(estimate.fused), 0.8, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(estimate.corrected), 0.8, accuracy: 0.000_001)
+    }
+
+    func testGoodQualityBlockPassesGate() {
+        let quality = QualityGateEngine.evaluate(
+            sample: sample(
+                distance: 0.8,
+                standardDeviation: 0.008,
+                tracking: 0.98,
+                stable: true,
+                drift: 0.3,
+                acceleration: 0.004,
+                yaw: 1,
+                pitch: 1,
+                luminance: 0.5,
+                faceCount: 1
+            ),
+            responseCount: 7,
+            audioLevelAdequate: true,
+            targetGeometryValid: true,
+            orientationChanged: false,
+            thresholds: .conservative
+        )
+        XCTAssertTrue(quality.isValid)
+        XCTAssertTrue(quality.discardReasons.isEmpty)
+    }
+
+    func testCalibrationRejectsMissingDistanceAndPoorFit() throws {
+        let incomplete = [
+            CalibrationObservation(groundTruthMetres: 0.4, rawDistanceMetres: 0.4),
+            CalibrationObservation(groundTruthMetres: 0.5, rawDistanceMetres: 0.5)
+        ]
+        let incompleteFit = try XCTUnwrap(CalibrationFitter.affineFit(observations: incomplete))
+        XCTAssertFalse(CalibrationFitter.passesAcceptance(observations: incomplete, fit: incompleteFit))
+
+        let required = [0.40, 0.50, 0.67, 0.80, 1.00, 1.33, 1.50, 2.00]
+        let poor = required.flatMap { distance in
+            (0..<10).map { _ in CalibrationObservation(groundTruthMetres: distance, rawDistanceMetres: distance * distance) }
+        }
+        let poorFit = try XCTUnwrap(CalibrationFitter.affineFit(observations: poor))
+        XCTAssertFalse(CalibrationFitter.passesAcceptance(observations: poor, fit: poorFit))
+    }
+
+    func testConfirmationDisagreementReturnsNoReliableResult() {
+        var engine = ThresholdSearchEngine(eye: .right)
+        _ = engine.submit(block: block(eye: .right, candidate: -0.5, distance: 2, outcome: .fail))
+        _ = engine.submit(block: block(eye: .right, candidate: -1, distance: 1, outcome: .pass))
+        _ = engine.submit(block: block(eye: .right, candidate: -0.75, distance: 1.33, outcome: .pass))
+
+        let firstDisagreement = engine.submit(block: block(eye: .right, candidate: -0.75, distance: 1.33, outcome: .fail))
+        XCTAssertEqual(firstDisagreement, .test(candidate: .init(diopter: -0.75), stage: .confirmation))
+        guard case .completed(let result) = engine.submit(block: block(eye: .right, candidate: -0.75, distance: 1.33, outcome: .fail)) else {
+            return XCTFail("Expected a conservative no-result")
+        }
+        XCTAssertEqual(result.status, .unreliableMeasurement)
+    }
+
+    func testThreeInvalidAttemptsReturnNoReliableResult() {
+        var engine = ThresholdSearchEngine(eye: .right)
+        let invalid = invalidBlock(eye: .right, candidate: -0.5, distance: 2)
+        _ = engine.submit(block: invalid)
+        _ = engine.submit(block: invalid)
+        guard case .completed(let result) = engine.submit(block: invalid) else {
+            return XCTFail("Expected invalid retry budget to end")
+        }
+        XCTAssertEqual(result.status, .unreliableMeasurement)
+    }
+
+    func testWrongEyeCannotContaminateSearch() {
+        var engine = ThresholdSearchEngine(eye: .right)
+        guard case .completed(let result) = engine.submit(block: block(eye: .left, candidate: -0.5, distance: 2, outcome: .pass)) else {
+            return XCTFail("Expected wrong-eye rejection")
+        }
+        XCTAssertEqual(result.status, .unreliableMeasurement)
+    }
+
     private func block(eye: Eye, candidate: Double, distance: Double, outcome: TrialOutcome) -> TrialBlock {
         let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down]
         let responses = outcome == .pass ? targets : Array(repeating: OptotypeDirection.left, count: 7)
@@ -194,6 +280,32 @@ final class MeasurementEngineTests: XCTestCase {
                 audioLevelAdequate: true,
                 targetGeometryValid: true,
                 discardReasons: []
+            ),
+            responseSource: .voice,
+            transcript: nil
+        )
+    }
+
+    private func invalidBlock(eye: Eye, candidate: Double, distance: Double) -> TrialBlock {
+        let valid = block(eye: eye, candidate: candidate, distance: distance, outcome: .pass)
+        return TrialBlock(
+            eye: eye,
+            candidateDiopter: candidate,
+            targetDistanceMetres: valid.targetDistanceMetres,
+            actualMedianDistanceMetres: distance,
+            distanceStandardDeviation: 0.2,
+            targets: valid.targets,
+            responses: valid.responses,
+            correctCount: 7,
+            outcome: .invalid,
+            quality: BlockQuality(
+                trackingCoverage: 0.5,
+                phoneStable: false,
+                headPoseValid: true,
+                distanceStable: false,
+                audioLevelAdequate: true,
+                targetGeometryValid: true,
+                discardReasons: [.phoneMoved, .distanceUnstable]
             ),
             responseSource: .voice,
             transcript: nil

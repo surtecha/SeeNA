@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseChoice, parseDirections } from "../lib/direction-parser.js";
+import { analyzeDirectionTranscript, parseChoice, parseDirections } from "../lib/direction-parser.js";
 
 describe("direction parser", () => {
   it("parses exactly the deterministic direction vocabulary", () => {
@@ -10,6 +10,13 @@ describe("direction parser", () => {
 
   it("does not invent unknown or missing directions", () => {
     expect(parseDirections("up maybe left right")).toEqual(["up", "left", "right"]);
+    expect(analyzeDirectionTranscript("up maybe left right").unknownTokens).toEqual(["maybe"]);
+  });
+
+  it("exposes extra unknown words so the endpoint can reject the entire row", () => {
+    const analysis = analyzeDirectionTranscript("up left right down down up left banana");
+    expect(analysis.directions).toHaveLength(7);
+    expect(analysis.unknownTokens).toEqual(["banana"]);
   });
 
   it("requires one unambiguous constrained choice", () => {

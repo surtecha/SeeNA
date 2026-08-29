@@ -3,7 +3,7 @@ import { unlink } from "node:fs/promises";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import formidable, { type Fields, type Files } from "formidable";
 import { z } from "zod";
-import { parseChoice, parseDirections, type ChoiceSetID } from "../lib/direction-parser.js";
+import { analyzeDirectionTranscript, parseChoice, type ChoiceSetID } from "../lib/direction-parser.js";
 import { openAIClient } from "../lib/openai.js";
 import { secureEndpoint } from "../lib/security.js";
 
@@ -63,13 +63,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const transcript = transcription.text.trim();
 
     if (metadata.mode === "directionBlock") {
-      const parsedDirections = parseDirections(transcript);
-      const valid = parsedDirections.length === 7;
+      const analysis = analyzeDirectionTranscript(transcript);
+      const valid = analysis.directions.length === 7 && analysis.unknownTokens.length === 0;
       res.status(200).json({
         valid,
         mode: metadata.mode,
         transcript,
-        directions: valid ? parsedDirections : null,
+        directions: valid ? analysis.directions : null,
         choice: null,
         failureReason: valid ? null : "exactly_seven_directions_required"
       });

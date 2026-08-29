@@ -113,4 +113,24 @@ final class AppSession: ObservableObject {
             navigate(to: .permissions)
         }
     }
+
+    var requiresLiveSensors: Bool {
+        guard let route = path.last else { return false }
+        switch route {
+        case .phoneSetup, .calibration, .rightEyeTest, .leftEyeTest, .accessibilitySetup:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var requiresScreeningBrightness: Bool {
+        guard let route = path.last else { return false }
+        switch route {
+        case .calibration, .rightEyeTest, .leftEyeTest:
+            return true
+        default:
+            return false
+        }
+    }
 }
