@@ -11,7 +11,7 @@ struct RootView: View {
                     destination(for: route)
                 }
         }
-        .tint(SEENATheme.teal)
+        .tint(SEENATheme.ink)
         .preferredColorScheme(.light)
         .environment(\.dynamicTypeSize, session.accessibilityProfile?.swiftUIDynamicTypeSize ?? .large)
         .alert(

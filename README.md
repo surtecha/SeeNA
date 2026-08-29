@@ -90,6 +90,18 @@ xcodebuild \
   build
 ```
 
+Installed-app compatibility matrices (build the simulator app first and pass its absolute path):
+
+```bash
+scripts/validate-iphone-matrix.sh \
+  /absolute/path/to/Build/Products/Debug-iphonesimulator/SeeNA.app
+
+scripts/validate-ios-runtime-matrix.sh \
+  /absolute/path/to/Build/Products/Debug-iphonesimulator/SeeNA.app
+```
+
+The device matrix boots and checks every installed iPhone 14–17 family variant: base, Plus/Air, Pro, Pro Max and `e` models where available. The runtime matrix checks an iPhone 14 on iOS 16.4, 17.5, 18.5 and 26.5. Each gate installs the app, requires a live launch process, captures a non-empty rendered screenshot, terminates the live process and shuts the simulator down. The project deployment target remains iOS 16.0, so the compiler also rejects any unguarded use of newer-only APIs.
+
 Backend contracts, types and security:
 
 ```bash

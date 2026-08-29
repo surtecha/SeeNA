@@ -5,26 +5,50 @@ struct WelcomeView: View {
 
     var body: some View {
         ScreenScaffold(
-            title: "Check how clearly you see and make your phone easier to use.",
-            subtitle: "SEENA uses the iPhone camera and a visual target to provide an approximate myopia screening. It does not provide an eyeglass prescription or diagnose eye disease."
+            eyebrow: "Vision screening + accessibility",
+            title: "See clearly. Use your phone comfortably.",
+            subtitle: "SEENA uses your iPhone camera and a visual target for an approximate myopia screening, then creates a separate readability profile. It never provides an eyeglass prescription or diagnosis."
         ) {
-            VStack(alignment: .leading, spacing: 18) {
-                Label("One stationary iPhone", systemImage: "iphone")
-                Label("Right and left eyes tested separately", systemImage: "eye")
-                Label("A separate personalised readability profile", systemImage: "textformat.size")
+            Button {
+                session.navigate(to: .eligibility)
+            } label: {
+                Label("Start screening", systemImage: "arrow.right")
             }
-            .font(.title3.weight(.medium))
-            .foregroundColor(SEENATheme.ink)
-            .padding(20)
-            .background(SEENATheme.card)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            Button("Start screening") { session.navigate(to: .eligibility) }
                 .buttonStyle(PrimaryActionStyle())
                 .accessibilityHint("Begins eligibility and safety questions")
 
-            Button("How SEENA works") { session.navigate(to: .howItWorks) }
+            Button {
+                session.navigate(to: .howItWorks)
+            } label: {
+                Label("How SEENA works", systemImage: "info.circle")
+            }
                 .buttonStyle(SecondaryActionStyle())
+
+            WelcomeDial()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+
+            PlainCard {
+                VStack(spacing: 0) {
+                    WelcomeFeatureRow(
+                        icon: "iphone",
+                        title: "Stationary iPhone",
+                        detail: "You move while the phone stays secure"
+                    )
+                    Divider().overlay(SEENATheme.line)
+                    WelcomeFeatureRow(
+                        icon: "eye",
+                        title: "Each eye measured separately",
+                        detail: "Deterministic local scoring and quality gates"
+                    )
+                    Divider().overlay(SEENATheme.line)
+                    WelcomeFeatureRow(
+                        icon: "textformat.size",
+                        title: "Personal readability profile",
+                        detail: "Independent from the myopia estimate"
+                    )
+                }
+            }
 
             Button("Local history") { session.navigate(to: .history) }
                 .font(.headline)
@@ -36,11 +60,65 @@ struct WelcomeView: View {
     }
 }
 
+private struct WelcomeDial: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(SEENATheme.line, lineWidth: 1)
+            Circle()
+                .trim(from: 0, to: 0.82)
+                .stroke(
+                    SEENATheme.ink,
+                    style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            VStack(spacing: 7) {
+                Text("SEENA")
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                Text("SEE NOW AND ALWAYS")
+                    .font(.caption2.weight(.bold))
+                    .tracking(1.45)
+                    .foregroundStyle(SEENATheme.secondaryInk)
+            }
+        }
+        .frame(width: 190, height: 190)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("SEENA, See Now and Always")
+    }
+}
+
+private struct WelcomeFeatureRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.headline.weight(.semibold))
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(SEENATheme.secondaryInk)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 14)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct HowItWorksView: View {
     @EnvironmentObject private var session: AppSession
 
     var body: some View {
         ScreenScaffold(
+            eyebrow: "Guided measurement",
             title: "How SEENA works",
             subtitle: "Your movement changes the real viewing distance. SEENA changes the target size so its visual angle remains almost constant."
         ) {

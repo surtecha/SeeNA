@@ -34,6 +34,21 @@ The evidence record stores the maximum per-distance median near error and maximu
 
 Repeat the protocol after a major iOS/ARKit change, sensor implementation change, screen replacement, camera/stand geometry change or unexplained distance drift.
 
+## Simulator compatibility gates
+
+Simulator checks validate app installation, launch stability and responsive SwiftUI rendering. They do not validate TrueDepth distance accuracy, microphone acoustics, Core Motion behavior or a physical device profile.
+
+After building `SeeNA.app`, run both repeatable gates:
+
+```bash
+scripts/validate-iphone-matrix.sh /absolute/path/to/SeeNA.app
+scripts/validate-ios-runtime-matrix.sh /absolute/path/to/SeeNA.app
+```
+
+The first gate covers all available iPhone 14, 15, 16 and 17 family simulator variants, including Plus/Air, Pro, Pro Max and `e` models. The second covers the supported iOS major generations with Apple’s latest available representative runtimes: iOS 16.4, 17.5, 18.5 and 26.5. A matrix row passes only if the app installs, returns a live process ID, remains alive through screenshot capture and terminates cleanly.
+
+Keep `IPHONEOS_DEPLOYMENT_TARGET = 16.0`. A successful iOS 16.4 runtime check plus a clean 16.0-targeted compile protects the minimum OS boundary; do not raise it merely to simplify implementation.
+
 ## Required physical tests
 
 Record pass/fail, observed values, evidence screenshots and defects for each:
