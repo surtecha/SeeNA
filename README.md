@@ -1,8 +1,8 @@
 # SeeNA
 
-SeeNA (See Now and Always) is a native iPhone research prototype for guided myopia screening and personalised digital accessibility. The phone stays stationary while the participant moves. ARKit face tracking, relative facial scale and Core Motion estimate eye-to-screen distance; a pixel-controlled Landolt C row preserves an approximately five-arcminute visual angle; deterministic local code scores both eyes and builds the accessibility profile.
+SeeNA (See Now and Always) is a native iPhone research prototype for guided myopia screening. The phone stays stationary while the participant moves. ARKit face tracking, relative facial scale and Core Motion estimate eye-to-screen distance; a pixel-controlled Landolt C preserves an approximately five-arcminute visual angle; deterministic local code scores both eyes. A separate Gabor orientation task records whether each pattern was identified, without claiming a clinical contrast-sensitivity result.
 
-SeeNA reports an **approximate myopia screening range**, never an eyeglass prescription or diagnosis. Numeric screening is locked until the exact physical iPhone has passed the built-in tape-measure calibration protocol. Unsupported, inconsistent or poor-quality conditions return no numeric result.
+SeeNA reports an **approximate myopia screening range**, never an eyeglass prescription or diagnosis. A matched iPhone 14–16 display/TrueDepth profile can run the POC using raw ARKit distance; results remain explicitly unvalidated until that exact physical device passes the tape-measure calibration protocol. Unsupported, inconsistent or poor-quality conditions return no numeric result.
 
 ## What works
 
@@ -15,13 +15,13 @@ SeeNA reports an **approximate myopia screening range**, never an eyeglass presc
 - Core Motion stationarity with attitude, rotation and rolling acceleration RMS gates.
 - Eight-distance, 1,200-sample physical calibration harness with conservative acceptance limits.
 - Core Graphics Landolt C rendering with integer five-part geometry and no bitmap interpolation.
-- Random seven-target blocks, right and left eye flows, coarse/fine/confirmation search and no-result boundaries.
+- One answer-gated Landolt C at a time, right and left eye flows, coarse/fine/confirmation search and no-result boundaries.
+- One answer-gated Gabor orientation at a time, reported only as completed or repeat needed.
 - Bounded `.m4a` recording, live `gpt-transcribe`, deterministic direction/choice parsing and operator fallback.
-- Separate spoken readability staircase and local word-edit-distance scoring.
-- Contrast, control size, read-aloud and simplified-content preferences.
-- Local accessibility profile applied to SeeNA and a transformed essential-service fixture.
-- Strict `gpt-5.6-luna` Responses API explanations and content structures using `store: false`, no tools and Zod validation.
-- Deterministic fallback wording/content; OpenAI never calculates or receives a measurement number.
+- A serialized female voice channel for movement guidance, countdowns and responses, with no onboarding speech before Start.
+- A review sheet showing every target, the accepted answer and the response source.
+- Strict `gpt-5.6-luna` Responses API explanation and independent consistency passes using `store: false`, no tools and Zod validation.
+- Deterministic fallback wording; OpenAI cannot create, alter or render a measurement number.
 - Protected local JSON history, evidence mode, sharing and deletion.
 
 ## Repository
@@ -41,7 +41,7 @@ Requirements:
 - iOS 26 or later.
 - A physical Face ID iPhone for face tracking and numeric calibration. The simulator supports UI/fallback testing only.
 
-Open `SeeNA.xcodeproj`, select the `SeeNA` scheme and run on an iOS 26 simulator or physical iPhone. Numeric screening is enabled separately per exact hardware identifier only after that physical device completes calibration; every other compatible iPhone receives the full accessibility assessment without a fabricated eye-power value.
+Open `SeeNA.xcodeproj`, select the `SeeNA` scheme and run on an iOS 26 simulator or physical iPhone. The simulator supports UI QA through explicit DEBUG-only mock flags. On a matched physical iPhone 14–16, the real sensor flow can produce an explicitly unvalidated POC range; an unknown display profile or inadequate evidence produces no number.
 
 Before a device/backend test, configure the deployed HTTPS backend and matching prototype token without adding either value to Git:
 
@@ -104,7 +104,7 @@ npm run check
 npm audit --omit=dev
 ```
 
-Physical accuracy cannot be established in the simulator. Follow [docs/VALIDATION.md](docs/VALIDATION.md) on every exact demonstration model before numeric screening or any accuracy comparison.
+Physical accuracy cannot be established in the simulator. Follow [docs/VALIDATION.md](docs/VALIDATION.md) on every exact demonstration model before making any accuracy comparison; until then, the app marks the output as an unvalidated research POC.
 
 ## Privacy and truthfulness
 

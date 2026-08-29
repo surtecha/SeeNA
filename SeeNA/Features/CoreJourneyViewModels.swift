@@ -137,7 +137,9 @@ final class PhoneSetupViewModel {
         guard !hasStarted else { return }
         hasStarted = true
         sensors.start()
-        prompts.preloadNavigationGuidance()
+        prompts.preloadNavigationGuidance(additionalTexts: [
+            "Distance saved. Cover your left eye."
+        ])
         prompts.speak("Set the phone upright at eye level. Step into view, then let go.")
     }
 

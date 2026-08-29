@@ -59,12 +59,15 @@ struct EvidenceView: View {
         if !values.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 Text(title).font(.title2.bold())
+                Text("Non-clinical POC stimulus audit. The percentages below are renderer input levels, not a calibrated contrast-sensitivity threshold.")
+                    .font(.footnote)
+                    .foregroundStyle(SEENATheme.secondaryInk)
                 ForEach(Array(values.enumerated()), id: \.element.id) { index, trial in
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Block \(index + 1) — \(trial.outcome.rawValue.capitalized)").font(.headline)
-                        evidenceRow("Contrast", "\(Int((trial.contrast * 100).rounded()))%")
+                        evidenceRow("POC stimulus level", "\(Int((trial.contrast * 100).rounded()))% (not clinical contrast)")
                         evidenceRow("Targets", trial.targets.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: " "))
-                        evidenceRow("Responses", trial.responses.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: " "))
+                        evidenceRow("Responses", trial.responses.map { $0 == .notVisible ? "NV" : $0.rawValue.prefix(1).uppercased() }.joined(separator: " "))
                         evidenceRow("Score", "\(trial.correctCount)/7")
                     }
                     if index < values.count - 1 { Divider() }
@@ -117,6 +120,10 @@ struct EvidenceView: View {
     private func formatMetres(_ value: Double?) -> String { value.map { String(format: "%.3f m", $0) } ?? "—" }
     private func shortDirections(_ values: [OptotypeDirection]) -> String {
         values.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: " ")
+    }
+
+    private func shortDirections(_ values: [OptotypeResponse]) -> String {
+        values.map(\.auditCode).joined(separator: " ")
     }
 }
 

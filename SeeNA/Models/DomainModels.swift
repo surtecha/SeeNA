@@ -24,9 +24,82 @@ enum OptotypeDirection: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// The participant's auditable answer to one Landolt target.
+///
+/// The four direction raw values intentionally match the former
+/// `[OptotypeDirection]` encoding, so previously saved sessions continue to
+/// decode after `TrialBlock.responses` adopts this richer answer type.
+enum OptotypeResponse: String, Codable, Equatable, Sendable {
+    case up
+    case right
+    case down
+    case left
+    case notVisible
+
+    init(_ direction: OptotypeDirection) {
+        switch direction {
+        case .up: self = .up
+        case .right: self = .right
+        case .down: self = .down
+        case .left: self = .left
+        }
+    }
+
+    var direction: OptotypeDirection? {
+        switch self {
+        case .up: return .up
+        case .right: return .right
+        case .down: return .down
+        case .left: return .left
+        case .notVisible: return nil
+        }
+    }
+
+    func matches(_ target: OptotypeDirection) -> Bool {
+        direction == target
+    }
+
+    var auditCode: String {
+        switch self {
+        case .up: return "U"
+        case .right: return "R"
+        case .down: return "D"
+        case .left: return "L"
+        case .notVisible: return "NV"
+        }
+    }
+}
+
 enum GaborOrientation: String, Codable, CaseIterable, Sendable {
     case left
     case right
+}
+
+/// The participant's auditable answer to one Gabor orientation target.
+///
+/// `notVisible` is deliberately persisted as its own response rather than
+/// being encoded as the opposite orientation. That preserves the difference
+/// between an incorrect answer and an explicit inability to see the patch.
+enum GaborResponse: String, Codable, Equatable, Sendable {
+    case left
+    case right
+    case notVisible
+
+    init(_ orientation: GaborOrientation) {
+        self = orientation == .left ? .left : .right
+    }
+
+    var orientation: GaborOrientation? {
+        switch self {
+        case .left: return .left
+        case .right: return .right
+        case .notVisible: return nil
+        }
+    }
+
+    func matches(_ target: GaborOrientation) -> Bool {
+        orientation == target
+    }
 }
 
 enum GaborScreeningStatus: String, Codable, Sendable {
@@ -39,7 +112,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
     let eye: Eye
     let contrast: Double
     let targets: [GaborOrientation]
-    let responses: [GaborOrientation]
+    let responses: [GaborResponse]
     let correctCount: Int
     let outcome: TrialOutcome
     let responseSource: ResponseSource
@@ -51,7 +124,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         eye: Eye,
         contrast: Double,
         targets: [GaborOrientation],
-        responses: [GaborOrientation],
+        responses: [GaborResponse],
         correctCount: Int,
         outcome: TrialOutcome,
         responseSource: ResponseSource,
@@ -69,13 +142,39 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         self.transcript = transcript
         self.timestamp = timestamp
     }
+
+    /// Source-compatible convenience for direction-only test fixtures and
+    /// historical callers. New trial records preserve `notVisible` explicitly.
+    init(
+        id: UUID = UUID(),
+        eye: Eye,
+        contrast: Double,
+        targets: [GaborOrientation],
+        responses: [GaborOrientation],
+        correctCount: Int,
+        outcome: TrialOutcome,
+        responseSource: ResponseSource,
+        transcript: String?,
+        timestamp: Date = Date()
+    ) {
+        self.init(
+            id: id,
+            eye: eye,
+            contrast: contrast,
+            targets: targets,
+            responses: responses.map(GaborResponse.init),
+            correctCount: correctCount,
+            outcome: outcome,
+            responseSource: responseSource,
+            transcript: transcript,
+            timestamp: timestamp
+        )
+    }
 }
 
 struct GaborScreeningResult: Codable, Equatable, Sendable {
     let eye: Eye
     let status: GaborScreeningStatus
-    let lowestPassedContrast: Double?
-    let testedContrasts: [Double]
     let responseConsistency: QualityLabel
 }
 
@@ -304,7 +403,7 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
     let actualMedianDistanceMetres: Double
     let distanceStandardDeviation: Double
     let targets: [OptotypeDirection]
-    let responses: [OptotypeDirection]
+    let responses: [OptotypeResponse]
     let correctCount: Int
     let outcome: TrialOutcome
     let quality: BlockQuality
@@ -320,7 +419,7 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
         actualMedianDistanceMetres: Double,
         distanceStandardDeviation: Double,
         targets: [OptotypeDirection],
-        responses: [OptotypeDirection],
+        responses: [OptotypeResponse],
         correctCount: Int,
         outcome: TrialOutcome,
         quality: BlockQuality,
@@ -342,6 +441,42 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
         self.responseSource = responseSource
         self.transcript = transcript
         self.timestamp = timestamp
+    }
+
+    /// Source-compatible convenience for fixtures and operator-entered
+    /// direction arrays. New persisted data still uses `OptotypeResponse`.
+    init(
+        id: UUID = UUID(),
+        eye: Eye,
+        candidateDiopter: Double,
+        targetDistanceMetres: Double,
+        actualMedianDistanceMetres: Double,
+        distanceStandardDeviation: Double,
+        targets: [OptotypeDirection],
+        responses: [OptotypeDirection],
+        correctCount: Int,
+        outcome: TrialOutcome,
+        quality: BlockQuality,
+        responseSource: ResponseSource,
+        transcript: String?,
+        timestamp: Date = Date()
+    ) {
+        self.init(
+            id: id,
+            eye: eye,
+            candidateDiopter: candidateDiopter,
+            targetDistanceMetres: targetDistanceMetres,
+            actualMedianDistanceMetres: actualMedianDistanceMetres,
+            distanceStandardDeviation: distanceStandardDeviation,
+            targets: targets,
+            responses: responses.map(OptotypeResponse.init),
+            correctCount: correctCount,
+            outcome: outcome,
+            quality: quality,
+            responseSource: responseSource,
+            transcript: transcript,
+            timestamp: timestamp
+        )
     }
 }
 

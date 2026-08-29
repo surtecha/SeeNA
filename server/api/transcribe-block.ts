@@ -3,14 +3,19 @@ import { unlink } from "node:fs/promises";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import formidable, { type Fields, type Files } from "formidable";
 import { z } from "zod";
-import { analyzeDirectionTranscript, parseChoice, type ChoiceSetID } from "../lib/direction-parser.js";
+import {
+  analyzeDirectionTranscript,
+  parseChoice,
+  parseSingleDirectionAnswer,
+  type ChoiceSetID
+} from "../lib/direction-parser.js";
 import { openAIClient } from "../lib/openai.js";
 import { secureEndpoint } from "../lib/security.js";
 
 export const config = { api: { bodyParser: false } };
 
 const metadataSchema = z.object({
-  mode: z.enum(["directionBlock", "readabilityPhrase", "constrainedChoice"]),
+  mode: z.enum(["singleDirection", "directionBlock", "readabilityPhrase", "constrainedChoice"]),
   locale: z.string().min(2).max(20),
   phraseId: z.string().max(80).optional(),
   choiceSetId: z.enum(["contrast", "controls", "readAloud", "simplified"]).optional()
@@ -56,11 +61,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       model: process.env.OPENAI_TRANSCRIBE_MODEL ?? "gpt-transcribe",
       stream: false,
       ...(metadata.locale.toLowerCase().startsWith("en") ? { language: "en" } : {}),
-      ...(metadata.mode === "directionBlock"
-        ? { prompt: "A speaker says exactly seven words chosen from up, right, down, and left." }
-        : {})
+      ...(metadata.mode === "singleDirection"
+        ? {
+            prompt:
+              "A speaker gives one Landolt C opening direction or says they cannot see the target. Expected direction vocabulary is up, right, down, or left; transcribe the short natural phrase."
+          }
+        : metadata.mode === "directionBlock"
+          ? { prompt: "A speaker says exactly seven words chosen from up, right, down, and left." }
+          : {})
     });
     const transcript = transcription.text.trim();
+
+    if (metadata.mode === "singleDirection") {
+      const answer = parseSingleDirectionAnswer(transcript);
+      if (answer?.kind === "direction") {
+        res.status(200).json({
+          valid: true,
+          mode: metadata.mode,
+          transcript,
+          directions: [answer.direction],
+          choice: null,
+          failureReason: null
+        });
+        return;
+      }
+      if (answer?.kind === "notVisible") {
+        res.status(200).json({
+          valid: true,
+          mode: metadata.mode,
+          transcript,
+          directions: null,
+          choice: "notVisible",
+          failureReason: null
+        });
+        return;
+      }
+      res.status(200).json({
+        valid: false,
+        mode: metadata.mode,
+        transcript,
+        directions: null,
+        choice: null,
+        failureReason: "exactly_one_direction_required"
+      });
+      return;
+    }
 
     if (metadata.mode === "directionBlock") {
       const analysis = analyzeDirectionTranscript(transcript);

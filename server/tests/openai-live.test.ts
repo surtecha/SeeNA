@@ -6,17 +6,28 @@ import { generateAdaptedContent, generateExplanation, openAIClient } from "../li
 const live = process.env.SEENA_RUN_LIVE_TESTS === "1";
 
 describe.skipIf(!live)("OpenAI live contracts", () => {
-  it("returns strict non-clinical explanation JSON", async () => {
+  it("returns strict non-clinical explanation JSON and a Luna consistency classification", async () => {
     const result = await generateExplanation({
       locale: "en-AU",
-      rightEye: { status: "validEstimate", quality: "good" },
+      rightEye: {
+        status: "validEstimate",
+        quality: "good",
+        displayedEstimateDiopter: -2,
+        thresholdDistanceMetres: 0.5,
+        lastFailDiopter: -2.25,
+        firstPassDiopter: -2,
+        sensorUncertaintyDiopter: 0.12,
+        repeatabilityDiopter: 0.25
+      },
       leftEye: { status: "unreliableMeasurement", quality: "poor" },
       comparison: "The right-eye screening completed; the left-eye screening did not produce a reliable result.",
       actionCode: "professional_exam_recommended",
-      limitations: ["not_a_prescription", "hyperopia_not_assessed", "clinical_accuracy_not_established"]
+      limitations: ["not_a_prescription", "hyperopia_not_assessed", "clinical_accuracy_not_established"],
+      localMathConsistent: true
     });
     expect(result.usedFallback).toBe(false);
     expect(result.disclaimer.toLowerCase()).toMatch(/prototype|prescription|diagnos/);
+    expect(["consistent", "reviewRequired", "notApplicable"]).toContain(result.verification);
   }, 30_000);
 
   it("returns strict accessible fixture content", async () => {

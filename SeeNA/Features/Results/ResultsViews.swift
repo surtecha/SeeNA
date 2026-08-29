@@ -35,11 +35,17 @@ struct ProcessingView: View {
 
         let request = ExplanationRequest(
             locale: "en-AU",
-            rightEye: session.activeSession.rightEyeResult.map { .init(status: $0.status, quality: $0.trackingQuality) },
-            leftEye: session.activeSession.leftEyeResult.map { .init(status: $0.status, quality: $0.trackingQuality) },
+            rightEye: explanationFacts(for: session.activeSession.rightEyeResult),
+            leftEye: explanationFacts(for: session.activeSession.leftEyeResult),
             comparison: localComparison,
             actionCode: actionCode,
-            limitations: ["not_a_prescription", "hyperopia_not_assessed", "clinical_accuracy_not_established"]
+            limitations: [
+                "not_a_prescription",
+                "hyperopia_not_assessed",
+                "clinical_accuracy_not_established",
+                "phone_screen_far_point_poc_not_clinically_validated"
+            ],
+            localMathConsistent: localMathConsistent
         )
         do {
             session.cachedExplanation = try await dependencies.backend.explain(request)
@@ -51,6 +57,7 @@ struct ProcessingView: View {
     }
 
     private var actionCode: String {
+        guard localMathConsistent else { return "no_reliable_result" }
         let results = [session.activeSession.rightEyeResult, session.activeSession.leftEyeResult].compactMap { $0 }
         if results.isEmpty || results.contains(where: { $0.status == .unreliableMeasurement }) {
             return "no_reliable_result"
@@ -86,8 +93,30 @@ struct ProcessingView: View {
             ],
             nextSteps: ["Arrange a complete eye examination when accessible."],
             disclaimer: "Research POC only — not a diagnosis or prescription.",
+            verification: request.localMathConsistent ? .consistent : .reviewRequired,
             usedFallback: true
         )
+    }
+
+    private var localMathConsistent: Bool {
+        ScreeningIntegritySummary(screening: session.activeSession).allPresentResultsValid
+    }
+
+    private func explanationFacts(
+        for result: EyeScreeningResult?
+    ) -> ExplanationRequest.EyeFacts? {
+        result.map {
+            ExplanationRequest.EyeFacts(
+                status: $0.status,
+                quality: $0.trackingQuality,
+                displayedEstimateDiopter: $0.displayedEstimateDiopter,
+                thresholdDistanceMetres: $0.thresholdDistanceMetres,
+                lastFailDiopter: $0.lastFailDiopter,
+                firstPassDiopter: $0.firstPassDiopter,
+                sensorUncertaintyDiopter: $0.sensorUncertaintyDiopter,
+                repeatabilityDiopter: $0.repeatabilityDiopter
+            )
+        }
     }
 }
 
@@ -95,6 +124,55 @@ struct ResultsView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @State private var hasSpoken = false
+    @State private var showingAnswers = false
+
+    private var isScreeningComplete: Bool {
+        session.activeSession.rightEyeResult != nil
+            && session.activeSession.leftEyeResult != nil
+            && session.activeSession.rightGaborResult != nil
+            && session.activeSession.leftGaborResult != nil
+    }
+
+    private var eyeResults: [EyeScreeningResult] {
+        [session.activeSession.rightEyeResult, session.activeSession.leftEyeResult]
+            .compactMap { $0 }
+    }
+
+    private var integritySummary: ScreeningIntegritySummary {
+        ScreeningIntegritySummary(screening: session.activeSession)
+    }
+
+    private var verificationNeedsReview: Bool {
+        if !integritySummary.allPresentResultsValid { return true }
+        if case .reviewRequired? = session.cachedExplanation?.verification { return true }
+        return false
+    }
+
+    /// Never substitute model wording for the deterministic local summary
+    /// unless the separate consistency pass explicitly approved it.
+    private var displayedExplanation: String {
+        guard session.cachedExplanation?.verification == .consistent,
+              let modelText = session.cachedExplanation?.plainMeaning
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !modelText.isEmpty else {
+            return localFallbackComparison
+        }
+        return modelText
+    }
+
+    private var localFallbackComparison: String {
+        guard let right = session.activeSession.rightEyeResult,
+              let left = session.activeSession.leftEyeResult else {
+            return "One or both eyes need the visual screening repeated."
+        }
+        guard let rightValue = right.displayedEstimateDiopter,
+              let leftValue = left.displayedEstimateDiopter else {
+            return "Review each eye separately because at least one result is at the supported range boundary."
+        }
+        return abs(rightValue - leftValue) >= 0.75
+            ? "The two eyes produced noticeably different screening estimates."
+            : "The two eye screening estimates were broadly similar."
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -115,37 +193,49 @@ struct ResultsView: View {
                         .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
                 }
 
+                if !eyeResults.isEmpty {
+                    ResultVerificationBadge(
+                        needsReview: verificationNeedsReview,
+                        issueCount: integritySummary.issueCount
+                    )
+                }
+
                 ResultPair(
                     eye: .right,
                     landolt: session.activeSession.rightEyeResult,
-                    gabor: session.activeSession.rightGaborResult
+                    gabor: session.activeSession.rightGaborResult,
+                    integrity: integritySummary.right
                 )
                 ResultPair(
                     eye: .left,
                     landolt: session.activeSession.leftEyeResult,
-                    gabor: session.activeSession.leftGaborResult
+                    gabor: session.activeSession.leftGaborResult,
+                    integrity: integritySummary.left
                 )
 
-                if let explanation = session.cachedExplanation {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("What this means").font(.headline)
-                        Text(explanation.plainMeaning)
-                            .font(.body)
-                            .foregroundStyle(SEENATheme.secondaryInk)
-                    }
-                    .padding(16)
-                    .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("What this means").font(.headline)
+                    Text(displayedExplanation)
+                        .font(.body)
+                        .foregroundStyle(SEENATheme.secondaryInk)
                 }
+                .padding(16)
+                .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
 
                 Label("Arrange a complete eye examination when accessible.", systemImage: "arrow.right.circle.fill")
                     .font(.body.weight(.semibold))
+
+                if isScreeningComplete {
+                    Button("See answers", action: showAnswers)
+                        .buttonStyle(SecondaryActionStyle())
+                }
 
                 Button("How this was measured") { session.navigate(to: .evidence) }
                     .buttonStyle(SecondaryActionStyle())
                 Button("Start again") { session.startNewSession() }
                     .buttonStyle(PrimaryActionStyle())
 
-                Text("Not a prescription. Gabor contrast screening does not diagnose eye disease.")
+                Text("Not a prescription. The Gabor orientation task does not diagnose eye disease.")
                     .font(.caption)
                     .foregroundStyle(SEENATheme.secondaryInk)
                     .multilineTextAlignment(.center)
@@ -157,6 +247,12 @@ struct ResultsView: View {
         }
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden()
+        .sheet(isPresented: $showingAnswers) {
+            ResultsAnswerAuditView(
+                screening: session.activeSession,
+                isScreeningComplete: isScreeningComplete
+            )
+        }
         .task {
             guard !hasSpoken else { return }
             hasSpoken = true
@@ -169,95 +265,28 @@ struct ResultsView: View {
         let right = ResultPair.spokenSummary(
             eye: .right,
             landolt: session.activeSession.rightEyeResult,
-            gabor: session.activeSession.rightGaborResult
+            gabor: session.activeSession.rightGaborResult,
+            integrity: integritySummary.right
         )
         let left = ResultPair.spokenSummary(
             eye: .left,
             landolt: session.activeSession.leftEyeResult,
-            gabor: session.activeSession.leftGaborResult
+            gabor: session.activeSession.leftGaborResult,
+            integrity: integritySummary.left
         )
-        return "Your screening is complete. \(right) \(left) This is not a prescription. Please arrange a complete eye examination when accessible."
-    }
-}
+        let explanationText = " \(displayedExplanation)"
 
-private struct ResultPair: View {
-    let eye: Eye
-    let landolt: EyeScreeningResult?
-    let gabor: GaborScreeningResult?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("\(eye.displayName) eye")
-                .font(.title3.bold())
-            Divider()
-            ResultMetric(label: "Landolt C", value: landoltValue)
-            ResultMetric(label: "Gabor contrast", value: gaborValue)
-        }
-        .padding(16)
-        .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
-        .accessibilityElement(children: .combine)
+        // All measurement numbers above come from local deterministic state.
+        // Model prose is appended only after the separate consistency pass;
+        // otherwise this is the deterministic local comparison above.
+        let opening = isScreeningComplete
+            ? "Your screening is complete."
+            : "Your screening needs a repeat."
+        return "\(opening) \(right) \(left)\(explanationText) This is not a prescription. Please arrange a complete eye examination when accessible."
     }
 
-    private var landoltValue: String {
-        guard let landolt else { return "Repeat needed" }
-        switch landolt.status {
-        case .validEstimate:
-            if let fail = landolt.lastFailDiopter, let pass = landolt.firstPassDiopter {
-                return String(format: "%.2f to %.2f D", max(fail, pass), min(fail, pass))
-            }
-            return "Estimate available"
-        case .noMyopiaDetectedWithinRange: return "No myopia detected in POC range"
-        case .strongerThanSupportedRange: return "Outside POC range"
-        case .unreliableMeasurement: return "Repeat needed"
-        case .deviceUnsupported: return "Device unsupported"
-        case .userIneligible: return "Not suitable"
-        }
-    }
-
-    private var gaborValue: String {
-        guard let gabor, let contrast = gabor.lowestPassedContrast else { return "Repeat needed" }
-        return "Detected at \(Int((contrast * 100).rounded()))% contrast"
-    }
-
-    static func spokenSummary(eye: Eye, landolt: EyeScreeningResult?, gabor: GaborScreeningResult?) -> String {
-        let eyeName = eye.displayName
-        let landoltText: String
-        if let landolt, landolt.status == .validEstimate,
-           let fail = landolt.lastFailDiopter, let pass = landolt.firstPassDiopter {
-            landoltText = String(
-                format: "%@ eye approximate myopia range, minus %.2f to minus %.2f diopters.",
-                eyeName,
-                abs(max(fail, pass)),
-                abs(min(fail, pass))
-            )
-        } else if landolt?.status == .noMyopiaDetectedWithinRange {
-            landoltText = "\(eyeName) eye showed no myopia within the supported POC range."
-        } else if landolt?.status == .strongerThanSupportedRange {
-            landoltText = "\(eyeName) eye was outside the supported POC range."
-        } else {
-            landoltText = "\(eyeName) eye Landolt test needs repeating."
-        }
-
-        if let contrast = gabor?.lowestPassedContrast {
-            return "\(landoltText) Gabor patterns were detected at \(Int((contrast * 100).rounded())) percent contrast."
-        }
-        return "\(landoltText) The Gabor check needs repeating."
-    }
-}
-
-private struct ResultMetric: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(SEENATheme.secondaryInk)
-            Spacer(minLength: 8)
-            Text(value)
-                .font(.body.weight(.semibold))
-                .multilineTextAlignment(.trailing)
-        }
+    private func showAnswers() {
+        guard isScreeningComplete else { return }
+        showingAnswers = true
     }
 }

@@ -1,11 +1,15 @@
 import Foundation
 
 enum GaborScorer {
-    static func correctCount(targets: [GaborOrientation], responses: [GaborOrientation]) -> Int {
+    static func correctCount(targets: [GaborOrientation], responses: [GaborResponse]) -> Int {
         guard targets.count == 7, responses.count == 7 else { return 0 }
         return zip(targets, responses).reduce(0) { count, pair in
-            count + (pair.0 == pair.1 ? 1 : 0)
+            count + (pair.1.matches(pair.0) ? 1 : 0)
         }
+    }
+
+    static func correctCount(targets: [GaborOrientation], responses: [GaborOrientation]) -> Int {
+        correctCount(targets: targets, responses: responses.map(GaborResponse.init))
     }
 
     static func outcome(correctCount: Int, hasExactlySevenResponses: Bool) -> TrialOutcome {
@@ -44,6 +48,14 @@ struct GaborContrastEngine: Sendable {
             isComplete = true
             return .completed(unreliableResult())
         }
+        guard case .test(let requestedContrast) = nextAction,
+              abs(trial.contrast - requestedContrast) <= 0.000_001 else {
+            // A delayed block from another contrast level cannot be allowed to
+            // advance the staircase or become evidence for the public POC
+            // completion state.
+            isComplete = true
+            return .completed(unreliableResult())
+        }
         trials.append(trial)
 
         switch trial.outcome {
@@ -75,13 +87,9 @@ struct GaborContrastEngine: Sendable {
     }
 
     private func result() -> GaborScreeningResult {
-        let passed = trials.filter { $0.outcome == .pass }.map(\.contrast)
-        guard let lowest = passed.min() else { return unreliableResult() }
         return GaborScreeningResult(
             eye: eye,
             status: .completed,
-            lowestPassedContrast: lowest,
-            testedContrasts: trials.map(\.contrast),
             responseConsistency: trials.contains(where: { $0.outcome == .borderline }) ? .moderate : .good
         )
     }
@@ -90,8 +98,6 @@ struct GaborContrastEngine: Sendable {
         GaborScreeningResult(
             eye: eye,
             status: .unreliableMeasurement,
-            lowestPassedContrast: nil,
-            testedContrasts: trials.map(\.contrast),
             responseConsistency: .poor
         )
     }

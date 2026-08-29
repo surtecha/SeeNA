@@ -13,7 +13,13 @@ export const qualitySchema = z.enum(["good", "moderate", "poor", "unavailable"])
 
 export const eyeFactsSchema = z.object({
   status: statusSchema,
-  quality: qualitySchema
+  quality: qualitySchema,
+  displayedEstimateDiopter: z.number().finite().nullable().optional(),
+  thresholdDistanceMetres: z.number().finite().nullable().optional(),
+  lastFailDiopter: z.number().finite().nullable().optional(),
+  firstPassDiopter: z.number().finite().nullable().optional(),
+  sensorUncertaintyDiopter: z.number().finite().nullable().optional(),
+  repeatabilityDiopter: z.number().finite().nullable().optional()
 }).strict();
 
 export const explanationRequestSchema = z.object({
@@ -27,16 +33,34 @@ export const explanationRequestSchema = z.object({
     "no_reliable_result",
     "accessibility_only"
   ]),
-  limitations: z.array(z.string().min(1).max(120)).min(1).max(10)
+  limitations: z.array(z.string().min(1).max(120)).min(1).max(10),
+  localMathConsistent: z.boolean()
 }).strict();
 
-export const explanationResponseSchema = z.object({
+const explanationDraftShape = {
   headline: z.string().min(1).max(180),
   plainMeaning: z.string().min(1).max(500),
   limitations: z.array(z.string().min(1).max(220)).min(1).max(6),
   nextSteps: z.array(z.string().min(1).max(220)).min(1).max(5),
   disclaimer: z.string().min(1).max(160),
   usedFallback: z.boolean()
+};
+
+export const resultVerificationSchema = z.enum([
+  "consistent",
+  "reviewRequired",
+  "notApplicable"
+]);
+
+export const resultVerificationResponseSchema = z.object({
+  verification: resultVerificationSchema
+}).strict();
+
+export const explanationDraftResponseSchema = z.object(explanationDraftShape).strict();
+
+export const explanationResponseSchema = z.object({
+  ...explanationDraftShape,
+  verification: resultVerificationSchema
 }).strict();
 
 export const adaptContentRequestSchema = z.object({
@@ -57,7 +81,7 @@ export const adaptedContentResponseSchema = z.object({
   usedFallback: z.boolean()
 }).strict();
 
-export const explanationJSONSchema = {
+export const explanationDraftJSONSchema = {
   type: "object",
   additionalProperties: false,
   required: ["headline", "plainMeaning", "limitations", "nextSteps", "disclaimer", "usedFallback"],
@@ -68,6 +92,18 @@ export const explanationJSONSchema = {
     nextSteps: { type: "array", items: { type: "string" } },
     disclaimer: { type: "string" },
     usedFallback: { type: "boolean" }
+  }
+} as const;
+
+export const explanationVerificationJSONSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verification"],
+  properties: {
+    verification: {
+      type: "string",
+      enum: ["consistent", "reviewRequired", "notApplicable"]
+    }
   }
 } as const;
 
@@ -88,5 +124,7 @@ export const adaptedContentJSONSchema = {
 
 export type ExplanationRequest = z.infer<typeof explanationRequestSchema>;
 export type ExplanationResponse = z.infer<typeof explanationResponseSchema>;
+export type ExplanationDraftResponse = z.infer<typeof explanationDraftResponseSchema>;
+export type ResultVerification = z.infer<typeof resultVerificationSchema>;
 export type AdaptContentRequest = z.infer<typeof adaptContentRequestSchema>;
 export type AdaptedContentResponse = z.infer<typeof adaptedContentResponseSchema>;

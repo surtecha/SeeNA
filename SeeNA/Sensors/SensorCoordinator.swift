@@ -77,11 +77,33 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     private var trackingFrames: [Bool] = []
     private var mockTask: Task<Void, Never>?
     private var smoothedGaze: GazeAlignment?
+#if DEBUG
+    private var simulatorAutomationEnabled = false
+    private var simulatorTargetDistance = 0.40
+#endif
 
     init(profileRegistry: DeviceProfileRegistry, useMockData: Bool = false) {
         self.profileRegistry = profileRegistry
         self.useMockData = useMockData
+#if DEBUG
+        simulatorAutomationEnabled = SimulatorVoiceAutomation.isEnabled(usingMockSensors: useMockData)
+#endif
         super.init()
+    }
+
+    /// Exposed only so DEBUG simulator journeys can select the bundled POC
+    /// profile instead of being stopped by hardware checks that simulators can
+    /// never satisfy. Production launches always use real sensor capability.
+    var isUsingMockData: Bool { useMockData }
+
+    /// True only for the explicit simulator QA launch. Release builds always
+    /// return false, so no production journey can synthesize an answer.
+    var isSimulatorVoiceAutomationEnabled: Bool {
+#if DEBUG
+        simulatorAutomationEnabled
+#else
+        false
+#endif
     }
 
     var faceTrackingSupported: Bool { ARFaceTrackingConfiguration.isSupported }
@@ -132,6 +154,15 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
 
     func lockPhoneReference() {
         motion.lockReference()
+    }
+
+    /// Lets the DEBUG mock stream follow each requested screening distance.
+    /// The production stream has no writable target and remains AR-driven.
+    func setSimulatorTargetDistance(_ distance: Double) {
+#if DEBUG
+        guard simulatorAutomationEnabled, distance.isFinite, distance > 0 else { return }
+        simulatorTargetDistance = distance
+#endif
     }
 
     @discardableResult
@@ -252,10 +283,22 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     private func startMockStream() {
         mockTask?.cancel()
         mockTask = Task { [weak self] in
-            var index = 0.0
+            var index = 0
             while !Task.isCancelled {
                 guard let self else { return }
-                let distance = 0.40 + 0.02 * sin(index)
+                let distance: Double
+#if DEBUG
+                if simulatorAutomationEnabled {
+                    distance = SimulatorVoiceAutomation.distance(
+                        target: simulatorTargetDistance,
+                        tick: index
+                    )
+                } else {
+                    distance = 0.40 + 0.02 * sin(Double(index))
+                }
+#else
+                distance = 0.40 + 0.02 * sin(Double(index))
+#endif
                 latestSample = DistanceSample(
                     rawARDistanceMetres: distance,
                     relativeScaleDistanceMetres: distance,
@@ -274,7 +317,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
                     faceCount: 1,
                     interEyePixels: 210
                 )
-                index += 0.2
+                index += 1
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
         }

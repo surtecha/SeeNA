@@ -1,10 +1,28 @@
 import SwiftUI
 
 struct EyeTestView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @StateObject private var model: EyeTestViewModel
     @State private var operatorResponses: [OptotypeDirection] = []
+
+    private var geometry: OptotypeGeometry? {
+        guard let profile = session.activeSession.deviceProfile else { return nil }
+        return OptotypeGeometry.calculate(
+            distanceMetres: model.presentationDistance,
+            pixelsPerInch: profile.pixelsPerInch,
+            displayScale: profile.displayScale,
+            // Only the standard angular target is scored. The large locator
+            // rendered by the stage view is deliberately non-directional.
+            presentationMode: .clinicalFiveArcMinute
+        )
+    }
+
+    private var retryMessage: String? {
+        guard case .retry(let message) = model.phase else { return nil }
+        return message
+    }
 
     init(eye: Eye) {
         _model = StateObject(wrappedValue: EyeTestViewModel(eye: eye))
@@ -12,157 +30,127 @@ struct EyeTestView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            progressHeader
-            Spacer(minLength: 12)
-            testContent
-            Spacer(minLength: 12)
-            VoiceStatusPill(isListening: model.phase == .recording)
+            EyeTestProgressHeader(
+                eye: model.eye,
+                currentTrial: visibleTrialNumber,
+                totalTrials: model.totalTrialCount
+            )
+
+            EyeTestStageView(
+                phase: model.phase,
+                geometry: geometry,
+                currentTarget: model.currentTarget,
+                currentTrialIndex: model.currentTrialIndex,
+                completedTrialCount: model.completedTrialCount,
+                totalTrialCount: model.totalTrialCount,
+                distanceInstruction: model.guidanceCue.displayText,
+                currentDistance: model.currentDistance,
+                targetDistance: model.targetDistance,
+                isAtDistance: model.isInTargetZone,
+                readyProgress: model.readyProgress,
+                retryMessage: retryMessage,
+                retryButtonTitle: model.retryButtonTitle,
+                reduceMotion: reduceMotion,
+                retryAction: repeatVoiceResponse,
+                operatorAction: showOperatorInput
+            )
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 18)
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden(model.isRunningBlock)
-        .onAppear {
-            dependencies.brightness.applyScreeningBrightness()
-            dependencies.sensorCoordinator.start()
-            model.begin(using: dependencies)
-        }
-        .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
-            model.observe(sample, dependencies: dependencies, session: session)
-        }
+        .onAppear(perform: beginTest)
+        .onReceive(dependencies.sensorCoordinator.$latestSample, perform: observe)
         .overlay(alignment: .topLeading) {
-            Color.clear
-                .contentShape(Rectangle())
-                .frame(width: 56, height: 56)
-                .onLongPressGesture(minimumDuration: 2) {
-                    operatorResponses = []
-                    model.showingOperatorInput = true
-                }
-                .accessibilityLabel("Open operator response entry")
-                .accessibilityHint("Long press for two seconds")
+            operatorEntryGesture
         }
-        .sheet(isPresented: $model.showingOperatorInput) {
-            OperatorInputView(responses: $operatorResponses) {
-                Task {
-                    await model.submitOperatorResponses(
-                        operatorResponses,
-                        dependencies: dependencies,
-                        session: session
-                    )
-                }
-            }
+        .sheet(
+            isPresented: $model.showingOperatorInput,
+            onDismiss: operatorInputDidDismiss
+        ) {
+            OperatorInputView(responses: $operatorResponses, submit: submitOperatorResponses)
         }
     }
 
-    private var progressHeader: some View {
-        VStack(spacing: 8) {
-            Text("\(model.eye.displayName.uppercased()) EYE")
-                .font(.caption.weight(.bold))
-                .foregroundColor(SEENATheme.teal)
-            Text(model.phase.title)
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .multilineTextAlignment(.center)
-            if let stage = model.stage {
-                Text(stageLabel(stage))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(SEENATheme.secondaryInk)
-            }
-        }
-        .accessibilityElement(children: .combine)
+    private var visibleTrialNumber: Int {
+        min(max(model.currentTrialIndex + 1, 1), max(model.totalTrialCount, 1))
     }
 
-    @ViewBuilder
-    private var testContent: some View {
-        if case .retry(let message) = model.phase {
-            VStack(spacing: 22) {
-                Image(systemName: "arrow.clockwise.circle.fill")
-                    .font(.system(size: 74))
-                    .foregroundColor(SEENATheme.warning)
-                Text(message)
-                    .font(.title3.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                if !model.targets.isEmpty, let geometry {
-                    LandoltRowView(geometry: geometry, directions: model.targets)
-                }
-                Button(model.retryButtonTitle) {
-                    Task { await model.repeatVoice(dependencies: dependencies, session: session) }
-                }
-                .buttonStyle(PrimaryActionStyle())
-                Button("Use operator input") {
-                    operatorResponses = []
-                    model.showingOperatorInput = true
-                }
-                .buttonStyle(SecondaryActionStyle())
-            }
-        } else if [.presenting, .recording, .transcribing, .scoring].contains(model.phase),
-                  let geometry,
-                  model.targets.count == 7 {
-            VStack(spacing: 24) {
-                LandoltRowView(geometry: geometry, directions: model.targets)
-                if model.phase == .recording {
-                    Label("Listening…", systemImage: "waveform.circle.fill")
-                        .font(.title2.weight(.bold))
-                        .foregroundColor(SEENATheme.danger)
-                } else if model.phase == .transcribing || model.phase == .scoring {
-                    ProgressView()
-                        .scaleEffect(1.4)
-                }
-            }
-        } else {
-            VStack(spacing: 20) {
-                Text(distanceInstruction)
-                    .font(.system(size: 34, weight: .black, design: .rounded))
-                    .multilineTextAlignment(.center)
-                Text(currentDistanceText)
-                    .font(.system(size: 38, weight: .bold, design: .monospaced))
-                    .foregroundColor(isAtDistance ? SEENATheme.teal : SEENATheme.ink)
-                Text(String(format: "Target %.2f m", model.targetDistance))
-                    .font(.headline.weight(.semibold))
-                    .foregroundColor(SEENATheme.secondaryInk)
-                if model.phase == .stabilising {
-                    ProgressView(value: model.readyProgress)
-                        .tint(SEENATheme.teal)
-                        .scaleEffect(x: 1, y: 2)
-                }
-                Text("The test starts automatically when you are in place.")
-                    .font(.body.weight(.medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(SEENATheme.secondaryInk)
-            }
+    private var operatorEntryGesture: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .frame(width: 56, height: 56)
+            .onLongPressGesture(minimumDuration: 2, perform: showOperatorInput)
+            .allowsHitTesting(model.operatorEntryEnabled)
+            .accessibilityHidden(!model.operatorEntryEnabled)
+            .accessibilityLabel("Open operator response entry")
+            .accessibilityHint("Long press for two seconds")
+    }
+
+    private func beginTest() {
+        dependencies.brightness.applyScreeningBrightness()
+        dependencies.sensorCoordinator.start()
+        model.begin(using: dependencies)
+    }
+
+    private func observe(_ sample: DistanceSample?) {
+        model.observe(sample, dependencies: dependencies, session: session)
+    }
+
+    private func repeatVoiceResponse() {
+        Task {
+            await model.repeatVoice(dependencies: dependencies, session: session)
         }
     }
 
-    private var currentDistance: Double? { model.currentDistance }
-    private var currentDistanceText: String { currentDistance.map { String(format: "%.2f m", $0) } ?? "—" }
-    private var isAtDistance: Bool { model.isInTargetZone }
-    private var distanceInstruction: String { model.guidanceCue.displayText }
-    private var geometry: OptotypeGeometry? {
-        guard let profile = session.activeSession.deviceProfile else { return nil }
-        return OptotypeGeometry.calculate(
-            distanceMetres: model.presentationDistance,
-            pixelsPerInch: profile.pixelsPerInch,
-            displayScale: profile.displayScale
+    private func showOperatorInput() {
+        guard model.operatorEntryEnabled else { return }
+        operatorResponses = []
+        model.presentOperatorInput(using: dependencies)
+    }
+
+    private func submitOperatorResponses() {
+        Task {
+            await model.submitOperatorResponses(
+                operatorResponses,
+                dependencies: dependencies,
+                session: session
+            )
+        }
+    }
+
+    private func operatorInputDidDismiss() {
+        model.operatorInputDidDismiss(
+            dependencies: dependencies,
+            session: session
         )
-    }
-    private func stageLabel(_ stage: SearchStage) -> String {
-        switch stage {
-        case .coarse: return "Finding the first clear distance"
-        case .fine: return "Refining the threshold"
-        case .confirmation: return "Confirming the result"
-        case .boundaryConfirmation: return "Confirming the supported boundary"
-        }
     }
 }
 
-private struct EvidenceValue: View {
-    let label: String
-    let value: String
+private struct EyeTestProgressHeader: View {
+    let eye: Eye
+    let currentTrial: Int
+    let totalTrials: Int
 
     var body: some View {
-        VStack(spacing: 3) {
-            Text(value).font(.subheadline.weight(.bold)).lineLimit(1)
-            Text(label).font(.caption).foregroundColor(SEENATheme.secondaryInk).lineLimit(1)
+        HStack(spacing: 12) {
+            Text("\(eye.displayName) eye")
+                .font(.headline.weight(.bold))
+
+            Spacer(minLength: 12)
+
+            Text("Circle \(currentTrial) of \(totalTrials)")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(SEENATheme.card, in: Capsule())
+                .overlay {
+                    Capsule().stroke(SEENATheme.line, lineWidth: 1)
+                }
         }
-        .frame(maxWidth: .infinity)
+        .frame(minHeight: 48)
         .accessibilityElement(children: .combine)
     }
 }
@@ -172,36 +160,58 @@ private struct OperatorInputView: View {
     @Binding var responses: [OptotypeDirection]
     let submit: () -> Void
 
+    private var responseSummary: String {
+        responses.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: "  ")
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
-                Text("Enter seven spoken directions")
+                Text("Enter seven directions")
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
-                Text(responses.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: "  "))
+
+                Text(responseSummary)
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .frame(maxWidth: .infinity, minHeight: 60)
                     .background(SEENATheme.background)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
+
                 LazyVGrid(columns: [.init(), .init()], spacing: 14) {
                     ForEach(OptotypeDirection.allCases, id: \.self) { direction in
                         Button(direction.rawValue.capitalized) {
-                            if responses.count < 7 { responses.append(direction) }
+                            add(direction)
                         }
                         .buttonStyle(SecondaryActionStyle())
                     }
                 }
-                Button("Undo") { _ = responses.popLast() }
+
+                Button("Undo", action: undo)
                     .disabled(responses.isEmpty)
+
                 Spacer()
-                Button("Submit operator responses") { submit() }
+
+                Button("Submit operator responses", action: submit)
                     .buttonStyle(PrimaryActionStyle())
                     .disabled(responses.count != 7)
             }
             .padding(24)
             .navigationTitle("Operator fallback")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: dismiss.callAsFunction)
+                }
+            }
         }
+    }
+
+    private func add(_ direction: OptotypeDirection) {
+        guard responses.count < 7 else { return }
+        responses.append(direction)
+    }
+
+    private func undo() {
+        _ = responses.popLast()
     }
 }

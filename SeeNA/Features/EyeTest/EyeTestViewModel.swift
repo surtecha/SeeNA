@@ -17,11 +17,11 @@ enum EyeTestPhase: Equatable {
         case .preparing: return "Preparing"
         case .guiding: return "MOVE TO TARGET"
         case .stabilising: return "HOLD STILL"
-        case .presenting: return "READ LEFT TO RIGHT"
-        case .recording: return "SPEAK THE SEVEN DIRECTIONS"
-        case .transcribing: return "Checking your response"
+        case .presenting: return "LOOK AT THE CIRCLE"
+        case .recording: return "SAY THE OPENING"
+        case .transcribing: return "Checking your answer"
         case .scoring: return "Scoring locally"
-        case .retry: return "Repeat this row"
+        case .retry: return "TRY THAT AGAIN"
         case .completed: return "Eye complete"
         }
     }
@@ -39,7 +39,12 @@ final class EyeTestViewModel: ObservableObject {
     @Published private(set) var currentDistance: Double?
     @Published private(set) var guidanceCue: DistanceGuidanceCue = .findFace
     @Published private(set) var isInTargetZone = false
+    @Published private(set) var currentTrialIndex = 0
+    @Published private(set) var completedTrialCount = 0
+    @Published private(set) var isVoiceAttemptActive = false
     @Published var showingOperatorInput = false
+
+    let totalTrialCount = SequentialOptotypeSession.requiredTargetCount
 
     private var engine: ThresholdSearchEngine
     private var mostRecentSample: DistanceSample?
@@ -54,6 +59,11 @@ final class EyeTestViewModel: ObservableObject {
     private var needsPositionRecheck = false
     private var lockedPresentationDistance: Double?
     private var isCollectingMeasurementSamples = false
+    private var sequentialSession: SequentialOptotypeSession?
+    private var blockTranscripts: [String] = []
+    private var activeVoiceTask: Task<Void, Never>?
+    private var voiceFlowGeneration = UUID()
+    private var operatorTakeoverAwaitingResolution = false
 
     init(eye: Eye) {
         self.eye = eye
@@ -74,6 +84,16 @@ final class EyeTestViewModel: ObservableObject {
 
     var targetDistance: Double { candidate?.distanceMetres ?? 0 }
 
+    /// The only optotype that should be rendered. It changes only after the
+    /// current spoken answer has been recorded, transcribed, and accepted.
+    var currentTarget: OptotypeDirection? {
+        sequentialSession?.currentTarget
+    }
+
+    var trialProgress: Double {
+        Double(completedTrialCount) / Double(totalTrialCount)
+    }
+
     /// Freeze the rendered optotype size once position is accepted. Live sensor
     /// jitter is still recorded for quality checks, but can no longer resize the
     /// row while the participant is trying to answer it.
@@ -85,19 +105,32 @@ final class EyeTestViewModel: ObservableObject {
         needsPositionRecheck ? "Recheck position" : "Repeat voice response"
     }
 
+    var operatorEntryEnabled: Bool {
+        !showingOperatorInput
+            && candidate != nil
+            && targets.count == totalTrialCount
+    }
+
     func begin(using dependencies: AppDependencies) {
         guard !hasBegun, candidate != nil else { return }
         hasBegun = true
         phase = .guiding
-        dependencies.spokenPrompts.preloadNavigationGuidance()
+        dependencies.spokenPrompts.preloadNavigationGuidance(additionalTexts: [
+            SpokenTestCountdown.startPrompt(
+                responseInstruction: "Say the opening direction. If you cannot see it, say I can't see it."
+            )
+        ])
         announceGuidance(using: dependencies)
     }
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
+        dependencies.sensorCoordinator.setSimulatorTargetDistance(targetDistance)
         mostRecentSample = sample
         if isCollectingMeasurementSamples, let sample {
+            // Keep every one of the seven answer-recording windows. The
+            // recorder bounds each attempt, so this stays small while the
+            // quality gate still sees early movement and the final answer.
             blockSamples.append(sample)
-            if blockSamples.count > 900 { blockSamples.removeFirst(blockSamples.count - 900) }
         }
 
         let measured = sample.flatMap {
@@ -107,6 +140,7 @@ final class EyeTestViewModel: ObservableObject {
         guard !isRunningBlock,
               !blockLaunchPending,
               !positioningAccepted,
+              !showingOperatorInput,
               candidate != nil else { return }
 
         let validPose = sample.map {
@@ -150,29 +184,68 @@ final class EyeTestViewModel: ObservableObject {
                 readyProgress = 0
                 blockLaunchPending = true
                 HapticFeedback.success()
-                Task { await runVoiceBlock(dependencies: dependencies, session: session) }
+                launchVoiceFlow(
+                    start: .newBlock,
+                    dependencies: dependencies,
+                    session: session
+                )
             }
         } else {
             phase = .guiding
         }
     }
 
-    func runVoiceBlock(dependencies: AppDependencies, session: AppSession) async {
-        guard !isRunningBlock, candidate != nil else {
+    private func runVoiceBlock(
+        dependencies: AppDependencies,
+        session: AppSession,
+        generation: UUID
+    ) async {
+        guard voiceFlowIsCurrent(generation),
+              !isRunningBlock,
+              candidate != nil else {
             blockLaunchPending = false
             return
         }
         blockLaunchPending = false
         isRunningBlock = true
         blockSamples.removeAll(keepingCapacity: true)
-        isCollectingMeasurementSamples = true
-        if targets.count != 7 { targets = Self.randomDirections() }
+        // Countdown and synthesized speech are setup, not measurement. Each
+        // answer recording explicitly opens and closes its own sample window.
+        isCollectingMeasurementSamples = false
+        let directions = Self.randomDirections()
+        guard let sequentialSession = SequentialOptotypeSession(targets: directions) else {
+            isCollectingMeasurementSamples = false
+            isRunningBlock = false
+            return
+        }
+        self.sequentialSession = sequentialSession
+        targets = sequentialSession.targets
+        blockTranscripts = []
+        currentTrialIndex = 0
+        completedTrialCount = 0
+        lastTranscript = nil
         phase = .presenting
-        let countdownCompleted = await SpokenTestCountdown.fromAcceptedPosition(
+        let countdownCompleted: Bool
+#if DEBUG
+        if dependencies.sensorCoordinator.isSimulatorVoiceAutomationEnabled {
+            countdownCompleted = await SimulatorVoiceAutomation.shortCountdown(
+                positionIsValid: { [weak self] in self?.positionIsAcceptable() == true }
+            )
+        } else {
+            countdownCompleted = await SpokenTestCountdown.fromAcceptedPosition(
+                prompts: dependencies.spokenPrompts,
+                responseInstruction: "Say the opening direction. If you cannot see it, say I can't see it.",
+                positionIsValid: { [weak self] in self?.positionIsAcceptable() == true }
+            )
+        }
+#else
+        countdownCompleted = await SpokenTestCountdown.fromAcceptedPosition(
             prompts: dependencies.spokenPrompts,
-            responseInstruction: "Say the seven ring openings from left to right.",
+            responseInstruction: "Say the opening direction. If you cannot see it, say I can't see it.",
             positionIsValid: { [weak self] in self?.positionIsAcceptable() == true }
         )
+#endif
+        guard voiceFlowIsCurrent(generation) else { return }
         guard countdownCompleted else {
             isCollectingMeasurementSamples = false
             isRunningBlock = false
@@ -183,43 +256,201 @@ final class EyeTestViewModel: ObservableObject {
             return
         }
 
-        do {
-            phase = .recording
-            let recording = try await dependencies.audioRecorder.record()
+        await collectSequentialAnswers(
+            dependencies: dependencies,
+            session: session,
+            generation: generation
+        )
+    }
+
+    private func collectSequentialAnswers(
+        dependencies: AppDependencies,
+        session: AppSession,
+        generation: UUID
+    ) async {
+        while voiceFlowIsCurrent(generation),
+              var activeSession = sequentialSession,
+              activeSession.currentTarget != nil {
+            do {
+                phase = .recording
+                let capture = try await captureSingleAnswer(dependencies: dependencies)
+                guard voiceFlowIsCurrent(generation) else { return }
+
+                switch capture {
+                case .retry(let spokenPrompt, _):
+                    // A failed or ambiguous answer never mutates the session,
+                    // so the exact same circle stays on screen. Stay fully
+                    // hands-free and keep listening until one answer is clear.
+                    guard activeSession.retryCurrentTarget() != nil else { return }
+                    isCollectingMeasurementSamples = false
+                    phase = .presenting
+                    await dependencies.spokenPrompts.speakAndWait(spokenPrompt)
+                    guard voiceFlowIsCurrent(generation) else { return }
+                    continue
+
+                case .accepted(let response, let transcript):
+                    let progression = activeSession.submit(response)
+                    guard progression != .rejected else { continue }
+
+                    sequentialSession = activeSession
+                    blockTranscripts.append(transcript)
+                    lastTranscript = transcript
+                    completedTrialCount = activeSession.responses.count
+                    currentTrialIndex = min(
+                        activeSession.currentIndex,
+                        totalTrialCount - 1
+                    )
+
+                    switch progression {
+                    case .advanced:
+                        // Publishing the new index is the only event that swaps
+                        // the displayed circle. Recording starts immediately,
+                        // so there is no timer that can advance without speech.
+                        phase = .presenting
+                        HapticFeedback.selection()
+                        await Task.yield()
+
+                    case .completed:
+                        isCollectingMeasurementSamples = false
+                        await submit(
+                            responses: activeSession.responses,
+                            source: .voice,
+                            transcript: blockTranscripts.joined(separator: " | "),
+                            audioLevelAdequate: true,
+                            dependencies: dependencies,
+                            session: session
+                        )
+                        guard voiceFlowIsCurrent(generation) else { return }
+                        return
+
+                    case .rejected:
+                        break
+                    }
+                }
+            } catch is CancellationError {
+                isCollectingMeasurementSamples = false
+                isRunningBlock = false
+                return
+            } catch {
+                guard voiceFlowIsCurrent(generation) else { return }
+                // A transient recorder/backend failure must not turn a spoken
+                // test into a button-driven flow or consume the target.
+                isCollectingMeasurementSamples = false
+                phase = .presenting
+                await dependencies.spokenPrompts.speakAndWait(
+                    "Connection paused. Same circle. Say a direction, or say I can't see it."
+                )
+                guard voiceFlowIsCurrent(generation) else { return }
+            }
+        }
+    }
+
+    private enum SingleAnswerCapture {
+        case accepted(response: OptotypeResponse, transcript: String)
+        case retry(spokenPrompt: String, screenMessage: String)
+    }
+
+    private enum VoiceFlowStart {
+        case newBlock
+        case resumeCurrentTarget
+    }
+
+    private func captureSingleAnswer(dependencies: AppDependencies) async throws -> SingleAnswerCapture {
+        // Only the actual visual-response interval contributes measurement
+        // samples. Network transcription and spoken retry prompts are excluded.
+        isCollectingMeasurementSamples = true
+#if DEBUG
+        if dependencies.sensorCoordinator.isSimulatorVoiceAutomationEnabled {
+            guard await SimulatorVoiceAutomation.waitForAutomatedAnswer() else {
+                isCollectingMeasurementSamples = false
+                throw CancellationError()
+            }
             isCollectingMeasurementSamples = false
-            defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
-            guard recording.adequateLevel else {
-                phase = .retry("The recording was too quiet. Speak the seven directions clearly.")
-                needsPositionRecheck = false
-                isRunningBlock = false
-                return
+            guard let target = sequentialSession?.currentTarget else {
+                throw CancellationError()
             }
-            phase = .transcribing
-            let response = try await dependencies.backend.transcribe(audioURL: recording.fileURL, mode: .directionBlock)
-            lastTranscript = response.transcript
-            guard response.valid, let directions = response.directions, directions.count == 7 else {
-                phase = .retry(response.failureReason ?? "I could not recover exactly seven directions.")
-                needsPositionRecheck = false
-                isRunningBlock = false
-                return
-            }
-            await submit(
-                responses: directions,
-                source: .voice,
-                transcript: response.transcript,
-                audioLevelAdequate: true,
-                dependencies: dependencies,
-                session: session
+            return .accepted(
+                response: OptotypeResponse(target),
+                transcript: "[DEBUG simulated voice] \(target.rawValue)"
             )
-        } catch is CancellationError {
-            isCollectingMeasurementSamples = false
-            isRunningBlock = false
+        }
+#endif
+        let recording: AudioRecordingResult
+        do {
+            recording = try await dependencies.audioRecorder.record(maximumDuration: 20)
         } catch {
             isCollectingMeasurementSamples = false
-            phase = .retry("Voice transcription is unavailable. Repeat or use operator input.")
-            needsPositionRecheck = false
-            isRunningBlock = false
+            throw error
         }
+        isCollectingMeasurementSamples = false
+        defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
+
+        guard recording.adequateLevel else {
+            return .retry(
+                spokenPrompt: "I didn't hear that. Same circle. Say a direction, or say I can't see it.",
+                screenMessage: "I couldn't hear your answer. The same circle will stay on screen."
+            )
+        }
+
+        phase = .transcribing
+        let response = try await dependencies.backend.transcribe(
+            audioURL: recording.fileURL,
+            mode: .singleDirection
+        )
+        if let direction = response.singleDirection {
+            return .accepted(
+                response: OptotypeResponse(direction),
+                transcript: response.transcript
+            )
+        }
+        if response.valid,
+           response.mode == .singleDirection,
+           response.choice == OptotypeResponse.notVisible.rawValue {
+            return .accepted(response: .notVisible, transcript: response.transcript)
+        }
+        return .retry(
+            spokenPrompt: "I didn't understand. Same circle. Say a direction, or say I can't see it.",
+            screenMessage: response.failureReason
+                ?? "Say up, down, left, right, or I can't see it."
+        )
+    }
+
+    func presentOperatorInput(using dependencies: AppDependencies) {
+        guard operatorEntryEnabled else { return }
+        // Operator takeover is atomic: the sheet is not exposed until the live
+        // recorder, speech, task, and generation have all been invalidated.
+        invalidateActiveVoiceFlow(using: dependencies)
+        operatorTakeoverAwaitingResolution = true
+        showingOperatorInput = true
+    }
+
+    func operatorInputDidDismiss(
+        dependencies: AppDependencies,
+        session: AppSession
+    ) {
+        // Submission resolves the takeover before dismissing the sheet, so an
+        // onDismiss callback from that path is deliberately a no-op. A genuine
+        // cancellation resumes the same session, target, and accepted answers
+        // under a fresh generation; stale voice continuations stay invalid.
+        guard operatorTakeoverAwaitingResolution else { return }
+        operatorTakeoverAwaitingResolution = false
+        showingOperatorInput = false
+
+        guard candidate != nil,
+              targets.count == totalTrialCount,
+              sequentialSession?.currentTarget != nil else {
+            resetSequentialPresentation()
+            phase = .guiding
+            announceGuidance(using: dependencies)
+            return
+        }
+
+        phase = .presenting
+        launchVoiceFlow(
+            start: .resumeCurrentTarget,
+            dependencies: dependencies,
+            session: session
+        )
     }
 
     func submitOperatorResponses(
@@ -227,14 +458,24 @@ final class EyeTestViewModel: ObservableObject {
         dependencies: AppDependencies,
         session: AppSession
     ) async {
+        operatorTakeoverAwaitingResolution = false
         showingOperatorInput = false
-        guard responses.count == 7 else {
+        // Defensive even though the UI disables entry during a voice attempt:
+        // stop the recorder/output and invalidate every suspended continuation
+        // before operator data is allowed to mutate the threshold engine.
+        invalidateActiveVoiceFlow(using: dependencies)
+        guard responses.count == totalTrialCount else {
             phase = .retry("Operator input must contain exactly seven directions.")
+            return
+        }
+        guard targets.count == totalTrialCount else {
+            phase = .retry("The test row is no longer active. Recheck position and try again.")
+            needsPositionRecheck = true
             return
         }
         isRunningBlock = true
         await submit(
-            responses: responses,
+            responses: responses.map(OptotypeResponse.init),
             source: .operatorInput,
             transcript: nil,
             audioLevelAdequate: true,
@@ -244,19 +485,58 @@ final class EyeTestViewModel: ObservableObject {
     }
 
     func repeatVoice(dependencies: AppDependencies, session: AppSession) async {
+        guard !isVoiceAttemptActive else { return }
         if needsPositionRecheck {
             needsPositionRecheck = false
             positioningAccepted = false
             lockedPresentationDistance = nil
+            resetSequentialPresentation()
             phase = .guiding
             announceGuidance(using: dependencies)
             return
         }
-        await runVoiceBlock(dependencies: dependencies, session: session)
+
+        guard sequentialSession?.currentTarget != nil else {
+            launchVoiceFlow(
+                start: .newBlock,
+                dependencies: dependencies,
+                session: session
+            )
+            return
+        }
+
+        launchVoiceFlow(
+            start: .resumeCurrentTarget,
+            dependencies: dependencies,
+            session: session
+        )
+    }
+
+    private func resumeVoiceBlock(
+        dependencies: AppDependencies,
+        session: AppSession,
+        generation: UUID
+    ) async {
+        guard voiceFlowIsCurrent(generation),
+              sequentialSession?.currentTarget != nil else { return }
+        isRunningBlock = true
+        // Keep the current session, answer list, frozen geometry, and target.
+        // The eventual whole-block quality gate rejects real position drift.
+        isCollectingMeasurementSamples = false
+        phase = .presenting
+        await dependencies.spokenPrompts.speakAndWait(
+            "Same circle. Say a direction, or say I can't see it."
+        )
+        guard voiceFlowIsCurrent(generation) else { return }
+        await collectSequentialAnswers(
+            dependencies: dependencies,
+            session: session,
+            generation: generation
+        )
     }
 
     private func submit(
-        responses: [OptotypeDirection],
+        responses: [OptotypeResponse],
         source: ResponseSource,
         transcript: String?,
         audioLevelAdequate: Bool,
@@ -295,7 +575,9 @@ final class EyeTestViewModel: ObservableObject {
             audioLevelAdequate: audioLevelAdequate,
             targetGeometryValid: geometry != nil
         )
-        let correct = TrialScorer.correctCount(targets: targets, responses: responses)
+        let correct = zip(targets, responses).reduce(into: 0) { count, pair in
+            if pair.1.matches(pair.0) { count += 1 }
+        }
         let outcome = quality.isValid
             ? TrialScorer.outcome(correctCount: correct, hasExactlySevenResponses: responses.count == 7)
             : .invalid
@@ -320,7 +602,7 @@ final class EyeTestViewModel: ObservableObject {
             session.activeSession.leftEyeTrials.append(block)
         }
         action = engine.submit(block: block)
-        targets = []
+        resetSequentialPresentation()
         isRunningBlock = false
 
         switch action {
@@ -364,7 +646,7 @@ final class EyeTestViewModel: ObservableObject {
         } else {
             movement = "Walk backwards slowly. I will tell you when to stop."
         }
-        let prompt = hasExplainedResizing ? movement : "The rings resize as you move. \(movement)"
+        let prompt = hasExplainedResizing ? movement : "The circle resizes as you move. \(movement)"
         hasExplainedResizing = true
         dependencies.spokenPrompts.speak(prompt)
     }
@@ -401,6 +683,59 @@ final class EyeTestViewModel: ObservableObject {
     ) {
         guard voiceScheduler.shouldAnnounce(cue, at: timestamp) else { return }
         dependencies.spokenPrompts.queueNavigationCue(cue.spokenText)
+    }
+
+    private func launchVoiceFlow(
+        start: VoiceFlowStart,
+        dependencies: AppDependencies,
+        session: AppSession
+    ) {
+        guard activeVoiceTask == nil else { return }
+        let generation = UUID()
+        voiceFlowGeneration = generation
+        isVoiceAttemptActive = true
+        activeVoiceTask = Task { [weak self] in
+            guard let self else { return }
+            switch start {
+            case .newBlock:
+                await runVoiceBlock(
+                    dependencies: dependencies,
+                    session: session,
+                    generation: generation
+                )
+            case .resumeCurrentTarget:
+                await resumeVoiceBlock(
+                    dependencies: dependencies,
+                    session: session,
+                    generation: generation
+                )
+            }
+            finishVoiceFlow(generation: generation)
+        }
+    }
+
+    private func voiceFlowIsCurrent(_ generation: UUID) -> Bool {
+        !Task.isCancelled && generation == voiceFlowGeneration
+    }
+
+    private func finishVoiceFlow(generation: UUID) {
+        guard generation == voiceFlowGeneration else { return }
+        activeVoiceTask = nil
+        isVoiceAttemptActive = false
+        isCollectingMeasurementSamples = false
+        isRunningBlock = false
+    }
+
+    private func invalidateActiveVoiceFlow(using dependencies: AppDependencies) {
+        voiceFlowGeneration = UUID()
+        activeVoiceTask?.cancel()
+        activeVoiceTask = nil
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
+        isVoiceAttemptActive = false
+        isCollectingMeasurementSamples = false
+        isRunningBlock = false
+        blockLaunchPending = false
     }
 
     private func qualityMessage(_ quality: BlockQuality) -> String {
@@ -443,7 +778,19 @@ final class EyeTestViewModel: ObservableObject {
         )
     }
 
+    private func resetSequentialPresentation() {
+        sequentialSession = nil
+        targets = []
+        blockTranscripts = []
+        currentTrialIndex = 0
+        completedTrialCount = 0
+        lastTranscript = nil
+        isCollectingMeasurementSamples = false
+    }
+
     private static func randomDirections() -> [OptotypeDirection] {
-        (0..<7).map { _ in OptotypeDirection.allCases.randomElement() ?? .up }
+        (0..<SequentialOptotypeSession.requiredTargetCount).map { _ in
+            OptotypeDirection.allCases.randomElement() ?? .up
+        }
     }
 }

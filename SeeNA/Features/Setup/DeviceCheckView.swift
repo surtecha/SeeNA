@@ -17,18 +17,18 @@ struct DeviceCheckView: View {
         ) {
             StatusRow(
                 title: "Hardware identifier",
-                detail: dependencies.profileRegistry.hardwareIdentifier,
-                state: dependencies.profileRegistry.profile() == nil ? .warning : .ready
+                detail: isMockJourney ? "iPhone simulator" : dependencies.profileRegistry.hardwareIdentifier,
+                state: activeProfile == nil ? .warning : .ready
             )
             StatusRow(
                 title: "Face tracking",
-                detail: dependencies.sensorCoordinator.faceTrackingSupported ? "Available" : "Unavailable",
-                state: dependencies.sensorCoordinator.faceTrackingSupported ? .ready : .unavailable
+                detail: faceTrackingReady ? (isMockJourney ? "Simulated" : "Available") : "Unavailable",
+                state: faceTrackingReady ? .ready : .unavailable
             )
             StatusRow(
                 title: "Motion sensors",
-                detail: dependencies.sensorCoordinator.motionSupported ? "Available" : "Unavailable",
-                state: dependencies.sensorCoordinator.motionSupported ? .ready : .unavailable
+                detail: motionReady ? (isMockJourney ? "Simulated" : "Available") : "Unavailable",
+                state: motionReady ? .ready : .unavailable
             )
             StatusRow(
                 title: "Device calibration",
@@ -65,14 +65,16 @@ struct DeviceCheckView: View {
             .buttonStyle(PrimaryActionStyle())
 
 #if DEBUG
-            if dependencies.profileRegistry.profile() != nil {
+            if !isMockJourney, dependencies.profileRegistry.profile() != nil {
                 Button("Open physical calibration tool") { showingCalibrationHarness = true }
                     .buttonStyle(SecondaryActionStyle())
             }
 #endif
         }
         .task {
-            let assessment = dependencies.profileRegistry.capabilityTier()
+            let assessment = dependencies.profileRegistry.capabilityTier(
+                allowMockSensors: isMockJourney
+            )
             tier = assessment
             session.capabilityTier = assessment
             if case .fullScreening(let profile) = assessment {
@@ -100,12 +102,13 @@ struct DeviceCheckView: View {
     }
 
     private var calibrationDetail: String {
-        guard let profile = dependencies.profileRegistry.profile() else { return "No profile for this exact hardware" }
+        guard let profile = activeProfile else { return "No profile for this exact hardware" }
+        if isMockJourney { return "Simulated POC profile" }
         return profile.isValidated ? "Physically validated" : "POC sensor profile"
     }
 
     private var calibrationState: StatusRow.State {
-        dependencies.profileRegistry.profile() == nil ? .warning : .ready
+        activeProfile == nil ? .warning : .ready
     }
 
     private var outcomeText: String {
@@ -126,11 +129,34 @@ struct DeviceCheckView: View {
     }
 
     private func refreshTier() {
-        let assessment = dependencies.profileRegistry.capabilityTier()
+        let assessment = dependencies.profileRegistry.capabilityTier(
+            allowMockSensors: isMockJourney
+        )
         tier = assessment
         session.capabilityTier = assessment
         if case .fullScreening(let profile) = assessment {
             session.activeSession.deviceProfile = profile
         }
+    }
+
+    private var isMockJourney: Bool {
+#if DEBUG
+        dependencies.sensorCoordinator.isUsingMockData
+#else
+        false
+#endif
+    }
+
+    private var faceTrackingReady: Bool {
+        isMockJourney || dependencies.sensorCoordinator.faceTrackingSupported
+    }
+
+    private var motionReady: Bool {
+        isMockJourney || dependencies.sensorCoordinator.motionSupported
+    }
+
+    private var activeProfile: DeviceProfile? {
+        if case .fullScreening(let profile) = tier { return profile }
+        return dependencies.profileRegistry.profile()
     }
 }

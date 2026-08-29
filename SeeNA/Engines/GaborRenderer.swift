@@ -2,12 +2,19 @@ import SwiftUI
 import UIKit
 
 enum GaborRenderer {
+    private static let imageCache = NSCache<NSString, UIImage>()
+
     static func image(
         orientation: GaborOrientation,
         contrast: Double,
         pixelSize: Int = 112
     ) -> UIImage {
         let size = max(48, pixelSize)
+        let cacheKey = "\(orientation.rawValue)-\(String(format: "%.4f", contrast))-\(size)" as NSString
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
+        }
+
         var pixels = [UInt8](repeating: 255, count: size * size * 4)
         let centre = Double(size - 1) / 2
         let sigma = Double(size) * 0.22
@@ -49,7 +56,32 @@ enum GaborRenderer {
             shouldInterpolate: true,
             intent: .defaultIntent
         )!
-        return UIImage(cgImage: cgImage, scale: 2, orientation: .up)
+        let image = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+        imageCache.setObject(image, forKey: cacheKey)
+        return image
+    }
+}
+
+/// A single, phone-scale Gabor patch. Keeping this separate from the legacy
+/// row renderer makes it impossible for the active test to shrink seven
+/// stimuli into one narrow phone row.
+struct GaborSingleTargetView: View {
+    let orientation: GaborOrientation
+    let contrast: Double
+    let size: CGFloat
+
+    var body: some View {
+        Image(uiImage: GaborRenderer.image(
+            orientation: orientation,
+            contrast: contrast,
+            pixelSize: 512
+        ))
+        .resizable()
+        .interpolation(.high)
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Striped contrast target")
     }
 }
 

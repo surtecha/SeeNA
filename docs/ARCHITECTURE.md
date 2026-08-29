@@ -12,7 +12,7 @@ ARKit + relative face scale + Core Motion
                     |
           quality gate + screen profile
                     |
-       pixel-aligned Landolt C row
+       pixel-aligned Landolt C target
                     |
       local score and threshold search
                     |
@@ -25,15 +25,15 @@ The backend owns bounded language operations only:
 iPhone .m4a -> /api/transcribe-block -> gpt-transcribe -> transcript
                                                     -> deterministic parser
 
-qualitative facts -> /api/explain-result -> gpt-5.6-luna strict JSON
-profile + fixture -> /api/adapt-content  -> gpt-5.6-luna strict JSON
+screening facts -> /api/explain-result -> gpt-5.6-luna explanation JSON
+                                    -> independent consistency JSON
 ```
 
-The app sends no numeric measurement to the explanation model. This makes numeric integrity structural rather than prompt-dependent.
+The model receives a read-only copy of deterministic screening facts for explanation and consistency checking. It cannot return a measurement field, and the backend rejects explanation text containing numbers or measurement units. The app renders every number directly from validated local state and falls back to local wording unless the independent pass returns `consistent`.
 
 ## iOS state and dependencies
 
-`AppSession` owns route history, the active `ScreeningSession`, sensor presentation state, the accessibility answers/profile and cached language responses. Feature-local view models own onboarding interaction, permission orchestration, phone/gaze readiness, baseline calibration, threshold search and readability state. Views render those models and forward user intent; service side effects stay in the models. `AppDependencies` constructs the profile registry, protected session store, sensor coordinator, recorder, female spoken-prompt service, backend client and brightness restorer.
+`AppSession` owns route history, the active `ScreeningSession`, sensor presentation state and cached explanation. Feature-local view models own onboarding interaction, permission orchestration, phone/gaze readiness, baseline calibration, the Landolt threshold search and the Gabor orientation task. Views render those models and forward user intent; service side effects stay in the models. `AppDependencies` constructs the profile registry, protected session store, sensor coordinator, recorder, female spoken-prompt service, backend client and brightness restorer.
 
 There are no global service singletons and no networking calls inside a SwiftUI `body`.
 
@@ -53,14 +53,14 @@ No bundled profile is marked validated. A locally persisted profile requires 150
 
 The renderer creates a 1x monochrome bitmap whose native dimensions equal the calculated physical pixels. Outer diameter is `H`, stroke and gap are `H/5`, and inner diameter is `3H/5`. `H` is rounded to a multiple of five and displayed at `H / nativeScale` points with interpolation disabled.
 
-Each block generates seven random up/right/down/left targets. Exactly seven parsed responses are scored locally:
+Each block generates seven random up/right/down/left targets and presents only one at a time. A target changes only after its voice response is accepted. Exactly seven parsed responses are scored locally:
 
 - 5–7 correct: pass.
 - 0–3 correct: fail.
 - 4 correct: repeat once.
 - Invalid quality or count: discard/retry, then no reliable result after the retry budget.
 
-The search moves through −0.50, −1.00, −1.50, −2.00 and −2.50 D candidate positions, tests a quarter-diopter midpoint after bracketing, and confirms the passing threshold. The displayed estimate uses the actual measured median distance, not the candidate label.
+The search starts at the closest supported point and moves outward through −2.50, −1.25 and −0.50 D. Once it brackets the first pass/fail transition it tests quarter-diopter midpoints and confirms the passing threshold. The displayed estimate uses the actual measured median distance, not the candidate label. A complete, symmetric locator ring helps the participant find the screen centre but is never scored; the small inner C retains the approximately five-arcminute geometry.
 
 ## Backend security
 
@@ -74,4 +74,4 @@ The search moves through −0.50, −1.00, −1.50, −2.00 and −2.50 D candid
 
 ## Persistence and privacy
 
-Completed sessions are encoded as schema-versioned JSON under Application Support with complete file protection and atomic writes. Stored data is limited to directions, responses, derived distances, quality decisions, result ranges and accessibility settings. Raw video, frames, meshes, images, audio and biometric templates are not retained.
+Completed sessions are encoded as schema-versioned JSON under Application Support with complete file protection and atomic writes. Stored data is limited to directions, responses, derived distances, quality decisions and result ranges. Raw video, frames, meshes, images, audio and biometric templates are not retained.

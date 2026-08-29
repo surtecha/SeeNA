@@ -26,6 +26,7 @@ export function fallbackExplanation(input: ExplanationRequest): ExplanationRespo
     ],
     nextSteps: ["Arrange a complete professional eye examination when accessible."],
     disclaimer: "Research prototype only — not a diagnosis or prescription.",
+    verification: input.localMathConsistent ? "consistent" : "reviewRequired",
     usedFallback: true
   };
 }

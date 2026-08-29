@@ -42,27 +42,75 @@ enum RefractionEstimator {
     }
 }
 
+enum OptotypePresentationMode: Equatable, Sendable {
+    /// The clinical 5-arcminute reference geometry. This remains available for
+    /// calibration and evidence, but is too small for this phone-based POC at
+    /// the screening distances used by the app.
+    case clinicalFiveArcMinute
+
+    /// A single, centred, non-scored locator enlarged for a phone-screen POC.
+    ///
+    /// The requested angle is 96 arcminutes. That yields a clearly visible
+    /// ~67-point target at 40 cm and a nearly screen-width ~336-point target at
+    /// 2 m on a 460-ppi iPhone. Unlike a point-size clamp, the target keeps the
+    /// same visual angle at every distance. It helps a participant find the
+    /// centre of the phone before the scored target appears, but it must never
+    /// contribute to a refractive estimate or be interpreted as a clinical
+    /// 5-arcminute acuity target.
+    case phonePOCLocator
+
+    var angularSizeMultiplier: Double {
+        switch self {
+        case .clinicalFiveArcMinute: return 1
+        case .phonePOCLocator: return 19.2
+        }
+    }
+
+    var pointHeightRange: ClosedRange<Double>? {
+        switch self {
+        case .clinicalFiveArcMinute: return nil
+        case .phonePOCLocator: return nil
+        }
+    }
+}
+
 struct OptotypeGeometry: Equatable, Sendable {
-    static let fiveArcMinutesInRadians = (5.0 / 60.0) * (.pi / 180.0)
+    static let clinicalReferenceArcMinutes = 5.0
 
     let pixelHeight: Int
     let pointHeight: Double
     let strokePixels: Int
     let innerDiameterPixels: Int
     let gapPixels: Int
+    let presentationMode: OptotypePresentationMode
+    let requestedArcMinutes: Double
     let effectiveArcMinutes: Double
+    let wasPointSizeClamped: Bool
 
     static func calculate(
         distanceMetres: Double,
         pixelsPerInch: Double,
         displayScale: Double,
-        minimumPixelHeight: Int = 10
+        minimumPixelHeight: Int = 10,
+        presentationMode: OptotypePresentationMode = .clinicalFiveArcMinute
     ) -> OptotypeGeometry? {
         guard distanceMetres > 0, pixelsPerInch > 0, displayScale > 0 else { return nil }
 
-        let physicalHeightMetres = 2 * distanceMetres * tan(fiveArcMinutesInRadians / 2)
+        let requestedArcMinutes = clinicalReferenceArcMinutes * presentationMode.angularSizeMultiplier
+        let requestedRadians = (requestedArcMinutes / 60) * (.pi / 180)
+        let physicalHeightMetres = 2 * distanceMetres * tan(requestedRadians / 2)
         let rawPixels = physicalHeightMetres / 0.0254 * pixelsPerInch
-        let rounded = max(5, Int((rawPixels / 5).rounded()) * 5)
+        let angularPixelHeight = max(5, Int((rawPixels / 5).rounded()) * 5)
+        let rounded: Int
+        if let pointHeightRange = presentationMode.pointHeightRange {
+            // Preserve five-pixel Landolt proportions while guaranteeing that
+            // the SwiftUI frame stays within the practical phone POC range.
+            let minimumPixels = Int(ceil(pointHeightRange.lowerBound * displayScale / 5)) * 5
+            let maximumPixels = Int(floor(pointHeightRange.upperBound * displayScale / 5)) * 5
+            rounded = min(max(angularPixelHeight, minimumPixels), maximumPixels)
+        } else {
+            rounded = angularPixelHeight
+        }
         guard rounded >= minimumPixelHeight else { return nil }
 
         let effectivePhysicalHeight = Double(rounded) / pixelsPerInch * 0.0254
@@ -75,7 +123,10 @@ struct OptotypeGeometry: Equatable, Sendable {
             strokePixels: rounded / 5,
             innerDiameterPixels: rounded * 3 / 5,
             gapPixels: rounded / 5,
-            effectiveArcMinutes: effectiveArcMinutes
+            presentationMode: presentationMode,
+            requestedArcMinutes: requestedArcMinutes,
+            effectiveArcMinutes: effectiveArcMinutes,
+            wasPointSizeClamped: rounded != angularPixelHeight
         )
     }
 }

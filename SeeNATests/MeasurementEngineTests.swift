@@ -139,17 +139,82 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertNil(RefractionEstimator.diopter(forDistanceMetres: 0))
     }
 
-    func testOptotypeGeometryIsPixelAlignedAndNearFiveArcMinutes() throws {
+    func testClinicalReferenceGeometryRemainsPixelAlignedAndNearFiveArcMinutes() throws {
         for distance in [0.4, 0.5, 0.67, 0.8, 1.0, 1.33, 1.5, 2.0] {
             let geometry = try XCTUnwrap(
-                OptotypeGeometry.calculate(distanceMetres: distance, pixelsPerInch: 460, displayScale: 3)
+                OptotypeGeometry.calculate(
+                    distanceMetres: distance,
+                    pixelsPerInch: 460,
+                    displayScale: 3,
+                    presentationMode: .clinicalFiveArcMinute
+                )
             )
             XCTAssertEqual(geometry.pixelHeight % 5, 0)
             XCTAssertEqual(geometry.strokePixels * 5, geometry.pixelHeight)
             XCTAssertEqual(geometry.innerDiameterPixels + geometry.strokePixels * 2, geometry.pixelHeight)
             XCTAssertEqual(geometry.gapPixels, geometry.strokePixels)
+            XCTAssertEqual(geometry.requestedArcMinutes, 5)
             XCTAssertLessThan(abs(geometry.effectiveArcMinutes - 5), 1.3)
         }
+    }
+
+    func testPhonePOCSingleTargetIsLargePixelAlignedAndHonestAcrossSearchDistances() throws {
+        let expectedPointHeights: [Double: Double] = [
+            0.40: 200.0 / 3,
+            0.50: 255.0 / 3,
+            0.67: 340.0 / 3,
+            0.80: 405.0 / 3,
+            1.00: 505.0 / 3,
+            1.33: 675.0 / 3,
+            1.50: 760.0 / 3,
+            2.00: 1_010.0 / 3
+        ]
+
+        for distance in expectedPointHeights.keys.sorted() {
+            let geometry = try XCTUnwrap(
+                OptotypeGeometry.calculate(
+                    distanceMetres: distance,
+                    pixelsPerInch: 460,
+                    displayScale: 3,
+                    presentationMode: .phonePOCLocator
+                )
+            )
+
+            XCTAssertEqual(geometry.presentationMode, .phonePOCLocator)
+            XCTAssertEqual(geometry.requestedArcMinutes, 96)
+            XCTAssertEqual(geometry.pointHeight, try XCTUnwrap(expectedPointHeights[distance]), accuracy: 0.001)
+            XCTAssertEqual(geometry.pixelHeight % 5, 0)
+            XCTAssertEqual(geometry.strokePixels * 5, geometry.pixelHeight)
+            XCTAssertEqual(geometry.innerDiameterPixels + geometry.strokePixels * 2, geometry.pixelHeight)
+            XCTAssertEqual(geometry.gapPixels, geometry.strokePixels)
+            XCTAssertFalse(geometry.wasPointSizeClamped)
+            XCTAssertLessThan(abs(geometry.effectiveArcMinutes - 96), 1.3)
+        }
+    }
+
+    func testPhonePOCSingleTargetKeepsConstantVisualAngleWithoutPointClamp() throws {
+        let near = try XCTUnwrap(
+            OptotypeGeometry.calculate(
+                distanceMetres: 0.4,
+                pixelsPerInch: 460,
+                displayScale: 3,
+                presentationMode: .phonePOCLocator
+            )
+        )
+        let far = try XCTUnwrap(
+            OptotypeGeometry.calculate(
+                distanceMetres: 2,
+                pixelsPerInch: 460,
+                displayScale: 3,
+                presentationMode: .phonePOCLocator
+            )
+        )
+
+        XCTAssertFalse(near.wasPointSizeClamped)
+        XCTAssertFalse(far.wasPointSizeClamped)
+        XCTAssertEqual(near.requestedArcMinutes, far.requestedArcMinutes)
+        XCTAssertEqual(near.effectiveArcMinutes, far.effectiveArcMinutes, accuracy: 1.3)
+        XCTAssertGreaterThan(far.pointHeight, near.pointHeight * 4.9)
     }
 
     func testOptotypeRejectsSubPixelGeometry() {
@@ -158,7 +223,8 @@ final class MeasurementEngineTests: XCTestCase {
                 distanceMetres: 0.1,
                 pixelsPerInch: 460,
                 displayScale: 3,
-                minimumPixelHeight: 10
+                minimumPixelHeight: 10,
+                presentationMode: .clinicalFiveArcMinute
             )
         )
     }
@@ -224,13 +290,51 @@ final class MeasurementEngineTests: XCTestCase {
             return XCTFail("Expected a completed Gabor result")
         }
         XCTAssertEqual(result.status, .completed)
-        XCTAssertEqual(result.lowestPassedContrast, 0.25)
+        XCTAssertEqual(result.responseConsistency, .good)
     }
 
-    func testFirstCandidatePassRequiresConfirmationAndReturnsBoundaryStatus() {
+    func testGaborContrastStaircaseRejectsStaleWrongLevel() {
+        var engine = GaborContrastEngine(eye: .right)
+
+        guard case .completed(let result) = engine.submit(gaborTrial(contrast: 0.25, outcome: .pass)) else {
+            return XCTFail("Expected stale contrast to terminate as unreliable")
+        }
+
+        XCTAssertEqual(result.status, .unreliableMeasurement)
+        XCTAssertEqual(result.responseConsistency, .poor)
+    }
+
+    func testSearchStartsCloseAndMovesFartherOnlyAfterPassing() {
         var engine = ThresholdSearchEngine(eye: .right)
-        let first = block(eye: .right, candidate: -0.5, distance: 2, outcome: .pass)
-        XCTAssertEqual(engine.submit(block: first), .test(candidate: .init(diopter: -0.5), stage: .confirmation))
+        XCTAssertEqual(
+            engine.nextAction,
+            .test(candidate: .init(diopter: -2.5), stage: .coarse)
+        )
+        XCTAssertEqual(
+            engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.40, outcome: .pass)),
+            .test(candidate: .init(diopter: -1.25), stage: .coarse)
+        )
+        XCTAssertEqual(
+            engine.submit(block: block(eye: .right, candidate: -1.25, distance: 0.80, outcome: .pass)),
+            .test(candidate: .init(diopter: -0.5), stage: .coarse)
+        )
+    }
+
+    func testPassingThroughFarthestCandidateRequiresConfirmationAndReturnsBoundaryStatus() {
+        var engine = ThresholdSearchEngine(eye: .right)
+        for (candidate, nextCandidate) in zip(
+            ThresholdSearchEngine.coarseCandidates.dropLast(),
+            ThresholdSearchEngine.coarseCandidates.dropFirst()
+        ) {
+            XCTAssertEqual(
+                engine.submit(block: block(eye: .right, candidate: candidate, distance: 1 / abs(candidate), outcome: .pass)),
+                .test(candidate: .init(diopter: nextCandidate), stage: .coarse)
+            )
+        }
+        XCTAssertEqual(
+            engine.submit(block: block(eye: .right, candidate: -0.5, distance: 2.01, outcome: .pass)),
+            .test(candidate: .init(diopter: -0.5), stage: .confirmation)
+        )
 
         let confirmation = block(eye: .right, candidate: -0.5, distance: 1.98, outcome: .pass)
         guard case .completed(let result) = engine.submit(block: confirmation) else {
@@ -238,39 +342,44 @@ final class MeasurementEngineTests: XCTestCase {
         }
         XCTAssertEqual(result.status, .noMyopiaDetectedWithinRange)
         XCTAssertNil(result.displayedEstimateDiopter)
+        XCTAssertEqual(result.thresholdDistanceMetres, 1.98)
     }
 
-    func testNormalBracketFineSearchAndConfirmation() {
+    func testFirstFarFailureIsBracketedWithNearestPassThenConfirmed() {
         var engine = ThresholdSearchEngine(eye: .left)
-        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -0.5, distance: 2, outcome: .fail)), .test(candidate: .init(diopter: -1), stage: .coarse))
-        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -1, distance: 1, outcome: .pass)), .test(candidate: .init(diopter: -0.75), stage: .fine))
-        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -0.75, distance: 1.33, outcome: .fail)), .test(candidate: .init(diopter: -1), stage: .confirmation))
+        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -2.5, distance: 0.40, outcome: .pass)), .test(candidate: .init(diopter: -1.25), stage: .coarse))
+        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -1.25, distance: 0.80, outcome: .fail)), .test(candidate: .init(diopter: -2), stage: .fine))
+        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -2, distance: 0.50, outcome: .fail)), .test(candidate: .init(diopter: -2.25), stage: .fine))
+        XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -2.25, distance: 0.445, outcome: .pass)), .test(candidate: .init(diopter: -2.25), stage: .confirmation))
 
-        guard case .completed(let result) = engine.submit(block: block(eye: .left, candidate: -1, distance: 0.98, outcome: .pass)) else {
+        guard case .completed(let result) = engine.submit(block: block(eye: .left, candidate: -2.25, distance: 0.44, outcome: .pass)) else {
             return XCTFail("Expected valid result")
         }
         XCTAssertEqual(result.status, .validEstimate)
-        XCTAssertEqual(result.lastFailDiopter, -0.75)
-        XCTAssertEqual(result.firstPassDiopter, -1)
-        XCTAssertEqual(try XCTUnwrap(result.displayedEstimateDiopter), -1, accuracy: 0.000_001)
+        XCTAssertEqual(result.lastFailDiopter, -2)
+        XCTAssertEqual(result.firstPassDiopter, -2.25)
+        XCTAssertEqual(try XCTUnwrap(result.displayedEstimateDiopter), -2.25, accuracy: 0.000_001)
+        XCTAssertEqual(result.thresholdDistanceMetres, 0.44)
     }
 
-    func testFinalCandidateFailRequiresConfirmationAndReturnsStrongBoundary() {
+    func testFailingClosestCandidateRequiresConfirmationAndReturnsStrongBoundary() {
         var engine = ThresholdSearchEngine(eye: .right)
-        for candidate in ThresholdSearchEngine.coarseCandidates {
-            _ = engine.submit(block: block(eye: .right, candidate: candidate, distance: 1 / abs(candidate), outcome: .fail))
-        }
+        XCTAssertEqual(
+            engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.40, outcome: .fail)),
+            .test(candidate: .init(diopter: -2.5), stage: .boundaryConfirmation)
+        )
         guard case .completed(let result) = engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .fail)) else {
             return XCTFail("Expected completed strong-boundary result")
         }
         XCTAssertEqual(result.status, .strongerThanSupportedRange)
         XCTAssertNil(result.displayedEstimateDiopter)
+        XCTAssertEqual(result.thresholdDistanceMetres, 0.4)
     }
 
     func testBorderlineRepeatsOnceThenReturnsUnreliable() {
         var engine = ThresholdSearchEngine(eye: .right)
-        let borderline = block(eye: .right, candidate: -0.5, distance: 2, outcome: .borderline)
-        XCTAssertEqual(engine.submit(block: borderline), .test(candidate: .init(diopter: -0.5), stage: .coarse))
+        let borderline = block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .borderline)
+        XCTAssertEqual(engine.submit(block: borderline), .test(candidate: .init(diopter: -2.5), stage: .coarse))
         guard case .completed(let result) = engine.submit(block: borderline) else {
             return XCTFail("Expected unreliable result")
         }
@@ -509,13 +618,14 @@ final class MeasurementEngineTests: XCTestCase {
 
     func testConfirmationDisagreementReturnsNoReliableResult() {
         var engine = ThresholdSearchEngine(eye: .right)
-        _ = engine.submit(block: block(eye: .right, candidate: -0.5, distance: 2, outcome: .fail))
-        _ = engine.submit(block: block(eye: .right, candidate: -1, distance: 1, outcome: .pass))
-        _ = engine.submit(block: block(eye: .right, candidate: -0.75, distance: 1.33, outcome: .pass))
+        _ = engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .pass))
+        _ = engine.submit(block: block(eye: .right, candidate: -1.25, distance: 0.8, outcome: .fail))
+        _ = engine.submit(block: block(eye: .right, candidate: -2, distance: 0.5, outcome: .fail))
+        _ = engine.submit(block: block(eye: .right, candidate: -2.25, distance: 0.445, outcome: .pass))
 
-        let firstDisagreement = engine.submit(block: block(eye: .right, candidate: -0.75, distance: 1.33, outcome: .fail))
-        XCTAssertEqual(firstDisagreement, .test(candidate: .init(diopter: -0.75), stage: .confirmation))
-        guard case .completed(let result) = engine.submit(block: block(eye: .right, candidate: -0.75, distance: 1.33, outcome: .fail)) else {
+        let firstDisagreement = engine.submit(block: block(eye: .right, candidate: -2.25, distance: 0.445, outcome: .fail))
+        XCTAssertEqual(firstDisagreement, .test(candidate: .init(diopter: -2.25), stage: .confirmation))
+        guard case .completed(let result) = engine.submit(block: block(eye: .right, candidate: -2.25, distance: 0.445, outcome: .fail)) else {
             return XCTFail("Expected a conservative no-result")
         }
         XCTAssertEqual(result.status, .unreliableMeasurement)
@@ -523,7 +633,7 @@ final class MeasurementEngineTests: XCTestCase {
 
     func testThreeInvalidAttemptsReturnNoReliableResult() {
         var engine = ThresholdSearchEngine(eye: .right)
-        let invalid = invalidBlock(eye: .right, candidate: -0.5, distance: 2)
+        let invalid = invalidBlock(eye: .right, candidate: -2.5, distance: 0.4)
         _ = engine.submit(block: invalid)
         _ = engine.submit(block: invalid)
         guard case .completed(let result) = engine.submit(block: invalid) else {
@@ -534,10 +644,41 @@ final class MeasurementEngineTests: XCTestCase {
 
     func testWrongEyeCannotContaminateSearch() {
         var engine = ThresholdSearchEngine(eye: .right)
-        guard case .completed(let result) = engine.submit(block: block(eye: .left, candidate: -0.5, distance: 2, outcome: .pass)) else {
+        guard case .completed(let result) = engine.submit(block: block(eye: .left, candidate: -2.5, distance: 0.4, outcome: .pass)) else {
             return XCTFail("Expected wrong-eye rejection")
         }
         XCTAssertEqual(result.status, .unreliableMeasurement)
+    }
+
+    func testStaleCandidateOrTargetDistanceCannotAdvanceSearch() {
+        var staleCandidate = ThresholdSearchEngine(eye: .right)
+        guard case .completed(let staleCandidateResult) = staleCandidate.submit(block:
+            block(eye: .right, candidate: -1.25, distance: 0.8, outcome: .pass)
+        ) else {
+            return XCTFail("A stale candidate must end without an estimate")
+        }
+        XCTAssertEqual(staleCandidateResult.status, .unreliableMeasurement)
+
+        var wrongTargetDistance = ThresholdSearchEngine(eye: .right)
+        let requested = block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .pass)
+        let tampered = TrialBlock(
+            eye: requested.eye,
+            candidateDiopter: requested.candidateDiopter,
+            targetDistanceMetres: 0.5,
+            actualMedianDistanceMetres: requested.actualMedianDistanceMetres,
+            distanceStandardDeviation: requested.distanceStandardDeviation,
+            targets: requested.targets,
+            responses: requested.responses,
+            correctCount: requested.correctCount,
+            outcome: requested.outcome,
+            quality: requested.quality,
+            responseSource: requested.responseSource,
+            transcript: requested.transcript
+        )
+        guard case .completed(let wrongTargetResult) = wrongTargetDistance.submit(block: tampered) else {
+            return XCTFail("A target-distance mismatch must end without an estimate")
+        }
+        XCTAssertEqual(wrongTargetResult.status, .unreliableMeasurement)
     }
 
     private func block(eye: Eye, candidate: Double, distance: Double, outcome: TrialOutcome) -> TrialBlock {

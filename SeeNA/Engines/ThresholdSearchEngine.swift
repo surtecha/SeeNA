@@ -20,18 +20,27 @@ enum SearchAction: Equatable, Sendable {
 struct ThresholdSearchEngine: Sendable {
     private enum Phase: Sendable {
         case coarse(index: Int)
-        case fine(lastFail: Double, firstPass: Double)
+        case fine(lastFail: Double, firstPass: Double, firstPassActualDiopter: Double)
         case confirm(lastFail: Double?, firstPass: Double, initialActualDiopter: Double, disagreements: Int)
         case confirmStrongBoundary(disagreements: Int)
         case completed
     }
 
-    static let coarseCandidates = [-0.50, -1.00, -1.50, -2.00, -2.50]
+    // Begin at the closest supported distance so participants only move farther
+    // from the phone after demonstrating that they can resolve the target.
+    // Three large outward jumps minimise walking and stops. A bounded binary
+    // refinement then narrows the first pass/fail bracket to 0.25 D.
+    static let coarseCandidates = [-2.50, -1.25, -0.50]
 
     let eye: Eye
     private var phase: Phase = .coarse(index: 0)
     private var borderlineRepeats: [Double: Int] = [:]
     private var invalidRetries: [Double: Int] = [:]
+    /// The sensor-derived diopter for the nearest coarse candidate that most
+    /// recently passed. Fine refinement carries this value forward so the
+    /// final repeatability figure compares two real measured distances rather
+    /// than a nominal target distance.
+    private var actualDiopterForMostRecentPass: Double?
 
     init(eye: Eye) {
         self.eye = eye
@@ -41,7 +50,7 @@ struct ThresholdSearchEngine: Sendable {
         switch phase {
         case .coarse(let index):
             return .test(candidate: ScreeningCandidate(diopter: Self.coarseCandidates[index]), stage: .coarse)
-        case .fine(let lastFail, let firstPass):
+        case .fine(let lastFail, let firstPass, _):
             return .test(candidate: ScreeningCandidate(diopter: RefractionEstimator.roundedToQuarterDiopter((lastFail + firstPass) / 2)), stage: .fine)
         case .confirm(_, let firstPass, _, _):
             return .test(candidate: ScreeningCandidate(diopter: firstPass), stage: .confirmation)
@@ -54,6 +63,14 @@ struct ThresholdSearchEngine: Sendable {
 
     mutating func submit(block: TrialBlock) -> SearchAction {
         guard block.eye == eye else {
+            phase = .completed
+            return .completed(unreliableResult())
+        }
+        guard case .test(let requestedCandidate, _) = nextAction,
+              block.candidateDiopter.isFinite,
+              block.targetDistanceMetres.isFinite,
+              abs(block.candidateDiopter - requestedCandidate.diopter) <= 0.000_001,
+              abs(block.targetDistanceMetres - requestedCandidate.distanceMetres) <= 0.000_001 else {
             phase = .completed
             return .completed(unreliableResult())
         }
@@ -78,30 +95,53 @@ struct ThresholdSearchEngine: Sendable {
 
         switch phase {
         case .coarse(let index):
-            if block.outcome == .pass {
-                let firstPass = Self.coarseCandidates[index]
-                let lastFail = index == 0 ? nil : Self.coarseCandidates[index - 1]
-                if let lastFail {
-                    phase = .fine(lastFail: lastFail, firstPass: firstPass)
-                } else {
-                    phase = .confirm(lastFail: nil, firstPass: firstPass, initialActualDiopter: actualDiopter(block), disagreements: 0)
+            if block.outcome == .fail {
+                guard index > 0 else {
+                    phase = .confirmStrongBoundary(disagreements: 0)
+                    return nextAction
                 }
+
+                // The current, farther candidate is the first failure. The
+                // preceding, closer candidate is the nearest established pass.
+                phase = .fine(
+                    lastFail: Self.coarseCandidates[index],
+                    firstPass: Self.coarseCandidates[index - 1],
+                    firstPassActualDiopter: actualDiopterForMostRecentPass
+                        ?? Self.coarseCandidates[index - 1]
+                )
             } else if index == Self.coarseCandidates.count - 1 {
-                phase = .confirmStrongBoundary(disagreements: 0)
+                phase = .confirm(
+                    lastFail: nil,
+                    firstPass: Self.coarseCandidates[index],
+                    initialActualDiopter: actualDiopter(block),
+                    disagreements: 0
+                )
             } else {
+                actualDiopterForMostRecentPass = actualDiopter(block)
                 phase = .coarse(index: index + 1)
             }
 
-        case .fine(let lastFail, let firstPass):
+        case .fine(let lastFail, let firstPass, let firstPassActualDiopter):
             let tested = block.candidateDiopter
             let refinedLastFail = block.outcome == .fail ? tested : lastFail
             let refinedFirstPass = block.outcome == .pass ? tested : firstPass
-            phase = .confirm(
-                lastFail: refinedLastFail,
-                firstPass: refinedFirstPass,
-                initialActualDiopter: actualDiopter(block),
-                disagreements: 0
-            )
+            let refinedFirstPassActual = block.outcome == .pass
+                ? actualDiopter(block)
+                : firstPassActualDiopter
+            if abs(refinedLastFail - refinedFirstPass) > 0.25 + 0.000_001 {
+                phase = .fine(
+                    lastFail: refinedLastFail,
+                    firstPass: refinedFirstPass,
+                    firstPassActualDiopter: refinedFirstPassActual
+                )
+            } else {
+                phase = .confirm(
+                    lastFail: refinedLastFail,
+                    firstPass: refinedFirstPass,
+                    initialActualDiopter: refinedFirstPassActual,
+                    disagreements: 0
+                )
+            }
 
         case .confirm(let lastFail, let firstPass, let initialActualDiopter, let disagreements):
             guard block.outcome == .pass else {

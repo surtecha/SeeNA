@@ -33,6 +33,7 @@ struct NetworkConfiguration: Sendable {
 }
 
 enum TranscriptionMode: String, Codable, Sendable {
+    case singleDirection
     case directionBlock
     case readabilityPhrase
     case constrainedChoice
@@ -45,12 +46,33 @@ struct TranscriptionResponse: Codable, Sendable {
     let directions: [OptotypeDirection]?
     let choice: String?
     let failureReason: String?
+
+    /// The one unambiguous Landolt-C answer returned by `singleDirection`.
+    /// Keeping this validation at the networking boundary prevents a caller
+    /// from accidentally accepting a partial or multi-direction transcript.
+    var singleDirection: OptotypeDirection? {
+        guard valid,
+              mode == .singleDirection,
+              let directions,
+              directions.count == 1 else {
+            return nil
+        }
+        return directions[0]
+    }
 }
 
 struct ExplanationRequest: Codable, Sendable {
     struct EyeFacts: Codable, Sendable {
         let status: ScreeningStatus
         let quality: QualityLabel
+        /// Deterministic values calculated on-device. They are evidence for the
+        /// remote consistency check, never values supplied or revised by it.
+        let displayedEstimateDiopter: Double?
+        let thresholdDistanceMetres: Double?
+        let lastFailDiopter: Double?
+        let firstPassDiopter: Double?
+        let sensorUncertaintyDiopter: Double?
+        let repeatabilityDiopter: Double?
     }
 
     let locale: String
@@ -59,6 +81,15 @@ struct ExplanationRequest: Codable, Sendable {
     let comparison: String
     let actionCode: String
     let limitations: [String]
+    /// The on-device arithmetic/invariant check. The backend can only report
+    /// this evidence; it cannot turn it into a clinical judgement.
+    let localMathConsistent: Bool
+}
+
+enum ResultVerification: String, Codable, Sendable {
+    case consistent
+    case reviewRequired
+    case notApplicable
 }
 
 struct ExplanationResponse: Codable, Sendable {
@@ -67,6 +98,7 @@ struct ExplanationResponse: Codable, Sendable {
     let limitations: [String]
     let nextSteps: [String]
     let disclaimer: String
+    let verification: ResultVerification
     let usedFallback: Bool?
 }
 
@@ -131,9 +163,13 @@ actor BackendClient {
 
     func speech(text: String, locale: String = "en-AU") async throws -> Data {
         var request = try makeRequest(path: "/api/speak", method: "POST")
+        // Voice guidance must never freeze a hands-free journey behind two
+        // long network attempts. If natural speech is not ready promptly, the
+        // caller immediately falls back to the best on-device female voice.
+        request.timeoutInterval = 8
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(SpeechRequest(text: text, locale: locale))
-        return try await sendWithSingleRetry(request)
+        return try await sendOnce(request)
     }
 
     private func postJSON<Input: Encodable, Output: Decodable>(path: String, value: Input, response: Output.Type) async throws -> Output {
@@ -179,6 +215,17 @@ actor BackendClient {
             }
         }
         throw lastError ?? BackendError.invalidResponse
+    }
+
+    private func sendOnce(_ request: URLRequest) async throws -> Data {
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw BackendError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw BackendError.serverStatus(http.statusCode)
+        }
+        return data
     }
 
     enum BackendError: LocalizedError {

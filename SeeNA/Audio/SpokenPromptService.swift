@@ -147,8 +147,11 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
 
     /// Warms the finite navigation vocabulary while the user completes setup,
     /// so live movement cues keep the natural backend voice without network lag.
-    func preloadNavigationGuidance(language: String = "en-AU") {
-        preload(DistanceGuidanceCue.preloadTexts, language: language)
+    func preloadNavigationGuidance(
+        additionalTexts: [String] = [],
+        language: String = "en-AU"
+    ) {
+        preload(DistanceGuidanceCue.preloadTexts + additionalTexts, language: language)
     }
 
     func stop() {

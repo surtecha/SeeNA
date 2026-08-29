@@ -19,6 +19,7 @@ let package = Package(
                 "App",
                 "Assets.xcassets",
                 "Audio",
+                "Debug",
                 "ContentView.swift",
                 "Engines/GaborRenderer.swift",
                 "Engines/LandoltCRenderer.swift",
@@ -38,6 +39,9 @@ let package = Package(
                 "Engines/MeasurementEngines.swift",
                 "Engines/GaborContrastEngine.swift",
                 "Engines/MotionStationarityEvaluator.swift",
+                "Engines/ResultIntegrityValidator.swift",
+                "Engines/SequentialGaborSession.swift",
+                "Engines/SequentialOptotypeSession.swift",
                 "Engines/ThresholdSearchEngine.swift"
             ]
         ),

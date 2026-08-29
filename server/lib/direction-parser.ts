@@ -36,6 +36,172 @@ const numberSynonyms: Readonly<Record<string, string>> = {
 const yesSynonyms = new Set(["yes", "yeah", "yep", "sure"]);
 const noSynonyms = new Set(["no", "nope", "nah"]);
 
+// A deliberately small allow-list for natural single-answer speech. These
+// tokens add no competing direction or negation, so they can be ignored without
+// turning the parser into an open-ended language guesser.
+const singleDirectionFillerTokens = new Set([
+  "a",
+  "answer",
+  "at",
+  "be",
+  "believe",
+  "c",
+  "can",
+  "circle",
+  "d",
+  "direction",
+  "gap",
+  "goes",
+  "hand",
+  "i",
+  "is",
+  "it",
+  "landolt",
+  "like",
+  "looks",
+  "maybe",
+  "my",
+  "on",
+  "opening",
+  "please",
+  "pointing",
+  "s",
+  "say",
+  "see",
+  "side",
+  "the",
+  "think",
+  "to",
+  "toward",
+  "towards",
+  "would"
+]);
+
+const notVisibleAllowedTokens = new Set([
+  "a",
+  "able",
+  "all",
+  "am",
+  "anything",
+  "at",
+  "away",
+  "barely",
+  "because",
+  "blur",
+  "blurred",
+  "blurry",
+  "c",
+  "can",
+  "cannot",
+  "cant",
+  "circle",
+  "clear",
+  "clearly",
+  "could",
+  "couldn",
+  "couldnt",
+  "dark",
+  "direction",
+  "discern",
+  "do",
+  "does",
+  "doesn",
+  "doesnt",
+  "don",
+  "dont",
+  "everything",
+  "enough",
+  "faint",
+  "far",
+  "fuzzy",
+  "gap",
+  "hard",
+  "hardly",
+  "hazy",
+  "i",
+  "identify",
+  "image",
+  "invisible",
+  "is",
+  "isn",
+  "isnt",
+  "it",
+  "just",
+  "landolt",
+  "looks",
+  "m",
+  "make",
+  "me",
+  "never",
+  "no",
+  "not",
+  "nothing",
+  "one",
+  "opening",
+  "out",
+  "pattern",
+  "please",
+  "properly",
+  "quite",
+  "read",
+  "really",
+  "s",
+  "see",
+  "shape",
+  "sharp",
+  "small",
+  "sorry",
+  "symbol",
+  "t",
+  "target",
+  "tell",
+  "the",
+  "thing",
+  "this",
+  "tiny",
+  "to",
+  "too",
+  "unable",
+  "unclear",
+  "very",
+  "visible",
+  "was",
+  "wasn",
+  "wasnt",
+  "well"
+]);
+
+const compactNegativeTokens = new Set([
+  "cannot",
+  "cant",
+  "couldnt",
+  "doesnt",
+  "dont",
+  "isnt",
+  "never",
+  "not",
+  "unable",
+  "wasnt"
+]);
+
+const splitNegativeStems = new Set(["can", "couldn", "doesn", "don", "isn", "wasn"]);
+const visualActionTokens = new Set(["discern", "identify", "make", "read", "see", "tell"]);
+const visualQualityTokens = new Set(["clear", "sharp", "visible"]);
+const directVisibilityFailureTokens = new Set([
+  "blur",
+  "blurred",
+  "blurry",
+  "fuzzy",
+  "hazy",
+  "invisible",
+  "unclear"
+]);
+const limitedVisibilityTokens = new Set(["dark", "faint", "far", "small", "tiny"]);
+
+export type SingleDirectionAnswer =
+  | { kind: "direction"; direction: Direction }
+  | { kind: "notVisible" };
+
 export function normalizedTokens(text: string): string[] {
   return text
     .normalize("NFKD")
@@ -48,6 +214,88 @@ export function normalizedTokens(text: string): string[] {
 
 export function parseDirections(text: string): Direction[] {
   return analyzeDirectionTranscript(text).directions;
+}
+
+/**
+ * Returns one direction only when the transcript contains one deterministic
+ * direction (or existing synonym) plus, optionally, harmless natural-speech
+ * filler. Unsupported, negating, repeated, and conflicting words are rejected
+ * instead of guessed.
+ */
+export function parseSingleDirection(text: string): Direction | null {
+  const answer = parseSingleDirectionAnswer(text);
+  return answer?.kind === "direction" ? answer.direction : null;
+}
+
+/**
+ * Parses either one unambiguous direction or an explicit inability to see the
+ * target. A not-visible phrase mixed with any direction is intentionally
+ * rejected so uncertainty can never be scored as a directional answer.
+ */
+export function parseSingleDirectionAnswer(text: string): SingleDirectionAnswer | null {
+  const analysis = analyzeDirectionTranscript(text);
+  const tokens = normalizedTokens(text);
+  const notVisible = isNotVisiblePhrase(tokens);
+
+  if (notVisible) {
+    return analysis.directions.length === 0 ? { kind: "notVisible" } : null;
+  }
+
+  const unsupportedTokens = analysis.unknownTokens.filter(
+    (token) => !singleDirectionFillerTokens.has(token)
+  );
+  if (analysis.directions.length !== 1 || unsupportedTokens.length !== 0) {
+    return null;
+  }
+  const direction = analysis.directions[0];
+  return direction ? { kind: "direction", direction } : null;
+}
+
+function isNotVisiblePhrase(tokens: string[]): boolean {
+  if (tokens.length === 0) return false;
+
+  const nonDirectionTokens = tokens.filter((token) => directionSynonyms[token] === undefined);
+  if (nonDirectionTokens.some((token) => !notVisibleAllowedTokens.has(token))) return false;
+
+  const hasCompactNegative = tokens.some((token) => compactNegativeTokens.has(token));
+  const hasSplitNegative = tokens.some(
+    (token, index) => token === "t" && index > 0 && splitNegativeStems.has(tokens[index - 1]!)
+  );
+  const hasNegative = hasCompactNegative || hasSplitNegative;
+  const hasVisualAction = tokens.some((token) => visualActionTokens.has(token));
+  const hasVisualQuality = tokens.some((token) => visualQualityTokens.has(token));
+  const hasDirectFailure = tokens.some(
+    (token, index) => directVisibilityFailureTokens.has(token)
+      && !isNegatedDescriptor(tokens, index)
+  );
+  const hasTooLimited = tokens.includes("too")
+    && tokens.some(
+      (token, index) => limitedVisibilityTokens.has(token)
+        && !isNegatedDescriptor(tokens, index)
+    );
+  const seesNothing = tokens.includes("nothing")
+    && (tokens.includes("see") || tokens.includes("visible"));
+  const canBarelySee = (tokens.includes("barely") || tokens.includes("hardly"))
+    && hasVisualAction;
+  const hardToSee = tokens.includes("hard") && hasVisualAction;
+
+  const hasNotVisibleMeaning = (hasNegative && (hasVisualAction || hasVisualQuality))
+    || hasDirectFailure
+    || hasTooLimited
+    || seesNothing
+    || canBarelySee
+    || hardToSee;
+
+  return hasNotVisibleMeaning;
+}
+
+function isNegatedDescriptor(tokens: string[], index: number): boolean {
+  const nearby = tokens.slice(Math.max(0, index - 3), index);
+  if (nearby.includes("no") || nearby.includes("not")) return true;
+  if (index >= 2 && tokens[index - 1] === "t") {
+    return splitNegativeStems.has(tokens[index - 2]!);
+  }
+  return false;
 }
 
 export function analyzeDirectionTranscript(text: string): {

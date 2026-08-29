@@ -31,13 +31,18 @@ final class DeviceProfileRegistry {
         return profiles.first { $0.hardwareIdentifiers.contains(identifier) }
     }
 
-    func capabilityTier() -> DeviceCapabilityTier {
+    func capabilityTier(allowMockSensors: Bool = false) -> DeviceCapabilityTier {
         guard UIDevice.current.userInterfaceIdiom == .phone else {
             return .unsupported(reason: .nonIPhone)
         }
         guard #available(iOS 16.0, *) else {
             return .unsupported(reason: .operatingSystemTooOld)
         }
+#if DEBUG
+        if allowMockSensors, let profile = mockProfileForCurrentScreen() {
+            return .fullScreening(profile: profile)
+        }
+#endif
         guard let profile = profile() else {
             return .accessibilityOnly(reason: .unvalidatedDevice)
         }
@@ -92,6 +97,20 @@ final class DeviceProfileRegistry {
             && runtimeHeight == profileHeight
             && abs(Double(screen.nativeScale) - profile.displayScale) < 0.01
     }
+
+#if DEBUG
+    /// Simulator hardware identifiers are `arm64`/`x86_64` and AR face
+    /// tracking is unavailable there. Pick the closest bundled display profile
+    /// for deterministic UI testing when the explicit mock launch flag is set.
+    private func mockProfileForCurrentScreen() -> DeviceProfile? {
+        if let exactScreen = profiles.first(where: screenMatches) {
+            return exactScreen
+        }
+        return profiles.first {
+            $0.marketingFamily == "iPhone 16" && $0.variant == "Pro"
+        } ?? profiles.first
+    }
+#endif
 
     private static func loadBundledProfiles() -> [DeviceProfile] {
         let candidateURLs = [

@@ -62,6 +62,26 @@ struct LandoltCView: View {
     }
 }
 
+/// The POC presentation surface: one large, stable target centred on the phone.
+/// Response sequencing remains outside the renderer so the target changes only
+/// after the response controller accepts the user's answer.
+struct LandoltSingleTargetView: View {
+    let geometry: OptotypeGeometry
+    let direction: OptotypeDirection
+
+    var body: some View {
+        LandoltCView(geometry: geometry, direction: direction)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: max(220, geometry.pointHeight * 1.35),
+                alignment: .center
+            )
+            .background(Color.white)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Landolt C target. Say the direction of the opening.")
+    }
+}
+
 struct LandoltRowView: View {
     let geometry: OptotypeGeometry
     let directions: [OptotypeDirection]
