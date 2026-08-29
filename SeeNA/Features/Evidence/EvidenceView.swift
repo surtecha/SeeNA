@@ -43,7 +43,7 @@ struct EvidenceView: View {
                 Text("D = −1 ÷ measured median distance in metres")
                     .font(.system(.body, design: .monospaced))
                 Text("Candidate positions guide movement only. The displayed estimate is calculated from the measured distance and rounded locally to 0.25 D.")
-                Text("SEENA v0 has not undergone clinical validation.")
+                Text("SeeNA v0 has not undergone clinical validation.")
                     .fontWeight(.bold)
             }
             .evidenceCard()

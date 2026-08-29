@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
+    @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
 
     var body: some View {
         NavigationStack(path: $session.path) {
@@ -13,9 +14,9 @@ struct RootView: View {
         }
         .tint(SEENATheme.ink)
         .preferredColorScheme(.light)
-        .environment(\.dynamicTypeSize, session.accessibilityProfile?.swiftUIDynamicTypeSize ?? .large)
+        .environment(\.dynamicTypeSize, session.accessibilityProfile?.swiftUIDynamicTypeSize ?? systemDynamicTypeSize)
         .alert(
-            "SEENA could not continue",
+            "SeeNA could not continue",
             isPresented: Binding(
                 get: { session.appError != nil },
                 set: { if !$0 { session.appError = nil } }
@@ -23,7 +24,7 @@ struct RootView: View {
             actions: { Button("OK", role: .cancel) { session.appError = nil } },
             message: { Text(session.appError?.localizedDescription ?? "Please try again.") }
         )
-        .onChange(of: session.accessibilityProfile) { profile in
+        .onChange(of: session.accessibilityProfile) { _, profile in
             session.activeSession.accessibilityProfile = profile
         }
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
@@ -37,10 +38,26 @@ struct RootView: View {
         case .howItWorks: HowItWorksView()
         case .eligibility: EligibilityView()
         case .safetyStop: SafetyStopView()
-        case .permissions: PermissionsView()
+        case .permissions:
+            PermissionsView(
+                model: PermissionsViewModel(audioRecorder: dependencies.audioRecorder)
+            )
         case .deviceCheck: DeviceCheckView()
-        case .phoneSetup: PhoneSetupView()
-        case .calibration: BaselineCalibrationView()
+        case .phoneSetup:
+            PhoneSetupView(
+                model: PhoneSetupViewModel(
+                    sensors: dependencies.sensorCoordinator,
+                    prompts: dependencies.spokenPrompts
+                )
+            )
+        case .calibration:
+            BaselineCalibrationView(
+                model: CalibrationViewModel(
+                    sensors: dependencies.sensorCoordinator,
+                    prompts: dependencies.spokenPrompts,
+                    brightness: dependencies.brightness
+                )
+            )
         case .rightEyeInstructions: EyeInstructionsView(eye: .right)
         case .rightEyeTest: EyeTestView(eye: .right)
         case .leftEyeInstructions: EyeInstructionsView(eye: .left)

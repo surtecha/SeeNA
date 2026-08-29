@@ -36,8 +36,8 @@ struct DeviceCheckView: View {
             )
             StatusRow(
                 title: "Microphone",
-                detail: AVAudioSession.sharedInstance().recordPermission == .granted ? "Ready" : "Voice permission not granted",
-                state: AVAudioSession.sharedInstance().recordPermission == .granted ? .ready : .warning
+                detail: AVAudioApplication.shared.recordPermission == .granted ? "Ready" : "Voice permission not granted",
+                state: AVAudioApplication.shared.recordPermission == .granted ? .ready : .warning
             )
             StatusRow(
                 title: "Internet for voice transcription",
@@ -101,7 +101,7 @@ struct DeviceCheckView: View {
         switch tier {
         case .fullScreening: return "This exact device is ready for numeric screening and accessibility setup."
         case .accessibilityOnly: return "Accessibility setup is available. Numeric screening remains disabled until this exact device passes calibration."
-        case .unsupported: return "This device cannot safely run the SEENA assessment."
+        case .unsupported: return "This device cannot safely run the SeeNA assessment."
         case nil: return "Checking device capabilities…"
         }
     }

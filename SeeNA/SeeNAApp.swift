@@ -22,7 +22,7 @@ struct SeeNAApp: App {
                     dependencies.brightness.restoreIfNeeded()
                     await restoreHistory()
                 }
-                .onChange(of: scenePhase) { phase in
+                .onChange(of: scenePhase) { _, phase in
                     handleScenePhase(phase)
                 }
         }

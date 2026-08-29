@@ -9,9 +9,9 @@ struct AccessibilityIntroductionView: View {
             title: "Make digital information easier to use",
             subtitle: "This is a separate near-readability assessment. It is not calculated from eye power and remains available even when numeric screening is unavailable."
         ) {
-            StatusRow(title: "Read unfamiliar text", detail: "SEENA measures transcript word accuracy at several text sizes.", state: .ready)
+            StatusRow(title: "Read unfamiliar text", detail: "SeeNA measures transcript word accuracy at several text sizes.", state: .ready)
             StatusRow(title: "Compare layouts", detail: "Choose contrast, control size, spoken assistance and simpler structure.", state: .ready)
-            StatusRow(title: "Apply your profile", detail: "SEENA changes its own sample service interface immediately.", state: .ready)
+            StatusRow(title: "Apply your profile", detail: "SeeNA changes its own sample service interface immediately.", state: .ready)
 
             Button("Set up the near assessment") { session.navigate(to: .accessibilitySetup) }
                 .buttonStyle(PrimaryActionStyle())

@@ -59,7 +59,7 @@ struct SafetyStopView: View {
     var body: some View {
         ScreenScaffold(
             title: "Do not continue this screening",
-            subtitle: "Sudden vision change, severe eye pain or a recent injury needs professional assessment. SEENA cannot determine the cause."
+            subtitle: "Sudden vision change, severe eye pain or a recent injury needs professional assessment. SeeNA cannot determine the cause."
         ) {
             StatusRow(
                 title: "Seek professional advice",

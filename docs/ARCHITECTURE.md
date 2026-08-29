@@ -33,7 +33,7 @@ The app sends no numeric measurement to the explanation model. This makes numeri
 
 ## iOS state and dependencies
 
-`AppSession` owns route history, the active `ScreeningSession`, sensor presentation state, the accessibility answers/profile and cached language responses. Feature-local view models own transient state such as the active threshold search or readability staircase. `AppDependencies` constructs the profile registry, protected session store, sensor coordinator, recorder, female spoken-prompt service, backend client and brightness restorer.
+`AppSession` owns route history, the active `ScreeningSession`, sensor presentation state, the accessibility answers/profile and cached language responses. Feature-local view models own onboarding interaction, permission orchestration, phone/gaze readiness, baseline calibration, threshold search and readability state. Views render those models and forward user intent; service side effects stay in the models. `AppDependencies` constructs the profile registry, protected session store, sensor coordinator, recorder, female spoken-prompt service, backend client and brightness restorer.
 
 There are no global service singletons and no networking calls inside a SwiftUI `body`.
 

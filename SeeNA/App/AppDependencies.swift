@@ -34,10 +34,15 @@ final class AppDependencies: ObservableObject {
 
     static func live() -> AppDependencies {
         let registry = DeviceProfileRegistry()
+#if DEBUG
+        let useMockSensors = ProcessInfo.processInfo.arguments.contains("-SEENA_USE_MOCK_SENSORS")
+#else
+        let useMockSensors = false
+#endif
         return AppDependencies(
             profileRegistry: registry,
             sessionStore: SessionStore(),
-            sensorCoordinator: SensorCoordinator(profileRegistry: registry),
+            sensorCoordinator: SensorCoordinator(profileRegistry: registry, useMockData: useMockSensors),
             audioRecorder: AudioBlockRecorder(),
             spokenPrompts: SpokenPromptService(),
             backend: BackendClient(configuration: .bundle),

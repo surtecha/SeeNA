@@ -16,11 +16,7 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
 
     func requestPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { allowed in
-                continuation.resume(returning: allowed)
-            }
-        }
+        await AVAudioApplication.requestRecordPermission()
     }
 
     func record(maximumDuration: TimeInterval = 12) async throws -> AudioRecordingResult {
@@ -100,7 +96,7 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         var errorDescription: String? {
             switch self {
             case .permissionDenied: return "Microphone permission is required for voice responses."
-            case .couldNotStart: return "SEENA could not start the voice recording."
+            case .couldNotStart: return "SeeNA could not start the voice recording."
             }
         }
     }

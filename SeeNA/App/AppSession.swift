@@ -33,11 +33,11 @@ enum AppError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .permissionDenied(let permission): return "SEENA does not have access to \(permission)."
+        case .permissionDenied(let permission): return "SeeNA does not have access to \(permission)."
         case .sensorUnavailable(let sensor): return "\(sensor) is not available on this device."
         case .backendUnavailable: return "The voice service is temporarily unavailable."
         case .persistenceFailed: return "This session could not be saved."
-        case .invalidState: return "SEENA could not safely continue this assessment."
+        case .invalidState: return "SeeNA could not safely continue this assessment."
         }
     }
 }
@@ -77,6 +77,17 @@ final class AppSession: ObservableObject {
     @Published var appError: AppError?
     @Published var isAccessibilityOnly = false
     @Published var isRestoringHistory = false
+
+    init() {
+#if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let keyIndex = arguments.firstIndex(of: "-SEENA_DEBUG_ROUTE"),
+           arguments.indices.contains(keyIndex + 1),
+           let route = Self.debugRoute(named: arguments[keyIndex + 1]) {
+            path = [route]
+        }
+#endif
+    }
 
     func navigate(to route: AppRoute) {
         path.append(route)
@@ -133,4 +144,15 @@ final class AppSession: ObservableObject {
             return false
         }
     }
+
+#if DEBUG
+    private static func debugRoute(named value: String) -> AppRoute? {
+        switch value.lowercased() {
+        case "permissions": return .permissions
+        case "phone-setup": return .phoneSetup
+        case "calibration": return .calibration
+        default: return nil
+        }
+    }
+#endif
 }

@@ -168,9 +168,9 @@ actor BackendClient {
 
         var errorDescription: String? {
             switch self {
-            case .invalidConfiguration: return "The SEENA backend URL is not configured."
-            case .invalidResponse: return "The SEENA backend returned an invalid response."
-            case .serverStatus(let status): return "The SEENA backend returned status \(status)."
+            case .invalidConfiguration: return "The SeeNA backend URL is not configured."
+            case .invalidResponse: return "The SeeNA backend returned an invalid response."
+            case .serverStatus(let status): return "The SeeNA backend returned status \(status)."
             }
         }
     }

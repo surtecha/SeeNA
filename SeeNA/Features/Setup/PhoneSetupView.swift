@@ -3,60 +3,146 @@ import SwiftUI
 struct PhoneSetupView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var model: PhoneSetupViewModel
+
+    init(model: PhoneSetupViewModel) {
+        _model = State(initialValue: model)
+    }
 
     var body: some View {
-        ScreenScaffold(
-            title: "Place the phone securely",
-            subtitle: "Keep the iPhone upright at eye level with the front camera clear and two metres of safe space in front."
+        ActionScaffold(
+            title: "Make the phone disappear.",
+            subtitle: "Set it at eye level. Then stop touching it.",
+            primaryTitle: model.primaryTitle,
+            primarySystemImage: model.primarySystemImage,
+            primaryEnabled: model.primaryEnabled,
+            primaryAction: { model.primaryAction(session: session) },
+            secondaryAction: FloatingAction(
+                title: "Hear guide",
+                systemImage: "speaker.wave.2",
+                action: model.replayGuide
+            )
         ) {
-            Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: 180)
-                .foregroundColor(SEENATheme.teal)
-                .frame(maxWidth: .infinity)
-                .accessibilityHidden(true)
+            TrackingStage(model: model, reduceMotion: reduceMotion)
 
-            liveStatus
-
-            Button("Lock phone position") {
-                dependencies.sensorCoordinator.lockPhoneReference()
-                dependencies.spokenPrompts.speak("Phone position locked. Stand close to the phone for calibration.")
+            HStack(spacing: 8) {
+                TrackingPill(title: "FACE", symbol: "person.crop.circle", ready: model.faceReady)
+                TrackingPill(title: "STILL", symbol: "iphone", ready: model.phoneReady)
+                TrackingPill(title: "GAZE", symbol: "eye", ready: model.gazeReady)
+                TrackingPill(title: "LIGHT", symbol: "sun.max", ready: model.lightReady)
             }
-            .buttonStyle(SecondaryActionStyle())
 
-            Button("Continue to calibration") { session.navigate(to: .calibration) }
-                .buttonStyle(PrimaryActionStyle())
-                .disabled(!canContinue)
+            ProgressLine(title: model.instruction, value: model.readinessProgress)
+                .contentTransition(.interpolate)
+                .animation(.smooth(duration: 0.3), value: model.readinessProgress)
         }
-        .onAppear { dependencies.sensorCoordinator.start() }
+        .onAppear { model.start() }
+        .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
+            model.observe(sample)
+        }
         .onDisappear {
-            if session.path.last != .calibration { dependencies.sensorCoordinator.stop() }
+            model.stopIfLeavingSetup(nextRoute: session.path.last)
         }
         .navigationTitle("Phone setup")
         .navigationBarTitleDisplayMode(.inline)
     }
+}
 
-    @ViewBuilder
-    private var liveStatus: some View {
-        if let sample = session.sensorState {
-            StatusRow(title: "Face", detail: sample.faceCount == 1 ? "One face centred" : "Centre one face in view", state: sample.faceCount == 1 ? .ready : .warning)
-            StatusRow(title: "Phone", detail: sample.phoneStable ? "Stable for testing" : "Keep the phone still", state: sample.phoneStable ? .ready : .warning)
-            StatusRow(title: "Head position", detail: abs(sample.headYawDegrees) <= 10 && abs(sample.headPitchDegrees) <= 10 ? "Facing the phone" : "Face the phone directly", state: abs(sample.headYawDegrees) <= 10 && abs(sample.headPitchDegrees) <= 10 ? .ready : .warning)
-            StatusRow(title: "Lighting", detail: sample.luminance >= 0.12 ? "Usable camera exposure" : "Turn on another light", state: sample.luminance >= 0.12 ? .ready : .warning)
-        } else {
-            ProgressView("Starting face and motion tracking…")
-                .frame(maxWidth: .infinity)
-                .padding(24)
+private struct TrackingStage: View {
+    let model: PhoneSetupViewModel
+    let reduceMotion: Bool
+
+    var body: some View {
+        VStack(spacing: 18) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("LIVE DISTANCE")
+                    .font(.caption.weight(.bold))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.white.opacity(0.55))
+                Spacer()
+                Text(model.distanceLabel)
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+            }
+
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 2)
+                    .frame(width: 172, height: 172)
+                Circle()
+                    .trim(from: 0, to: max(0.02, model.readinessProgress))
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .frame(width: 172, height: 172)
+                    .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.36), value: model.readinessProgress)
+
+                GazeIndicator(offset: model.gazeOffset, ready: model.gazeReady)
+            }
+
+            Text(model.instruction.uppercased())
+                .font(.caption.weight(.bold))
+                .tracking(1.2)
+                .foregroundStyle(Color.white.opacity(model.isReady ? 1 : 0.62))
+                .contentTransition(.opacity)
         }
+        .padding(22)
+        .frame(maxWidth: .infinity)
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Live phone setup")
+        .accessibilityValue("\(model.distanceLabel). \(model.instruction)")
     }
+}
 
-    private var canContinue: Bool {
-        guard let sample = session.sensorState else { return false }
-        return sample.faceCount == 1
-            && sample.phoneStable
-            && abs(sample.headYawDegrees) <= 10
-            && abs(sample.headPitchDegrees) <= 10
-            && sample.luminance >= 0.12
+private struct GazeIndicator: View {
+    let offset: CGSize
+    let ready: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 38, style: .continuous)
+                .stroke(Color.white.opacity(ready ? 0.9 : 0.35), lineWidth: 2)
+                .frame(width: 104, height: 78)
+
+            HStack(spacing: 25) {
+                Circle().fill(Color.white).frame(width: 8, height: 8)
+                Circle().fill(Color.white).frame(width: 8, height: 8)
+            }
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: 20, height: 20)
+                .overlay(Circle().fill(Color.black).frame(width: 7, height: 7))
+                .offset(offset)
+                .animation(.spring(response: 0.28, dampingFraction: 0.78), value: offset)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct TrackingPill: View {
+    let title: String
+    let symbol: String
+    let ready: Bool
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: ready ? "checkmark" : symbol)
+                .font(.caption.weight(.bold))
+                .contentTransition(.symbolEffect(.replace))
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.5)
+        }
+        .foregroundStyle(ready ? Color.white : SEENATheme.secondaryInk)
+        .frame(maxWidth: .infinity)
+        .frame(height: 56)
+        .background(ready ? Color.black : SEENATheme.card, in: Capsule())
+        .animation(.snappy(duration: 0.3), value: ready)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(ready ? "Ready" : "Not ready")
     }
 }

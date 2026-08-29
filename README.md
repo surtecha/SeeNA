@@ -1,12 +1,13 @@
-# SEENA
+# SeeNA
 
-SEENA is a native iPhone research prototype for guided myopia screening and personalised digital accessibility. The phone stays stationary while the participant moves. ARKit face tracking, relative facial scale and Core Motion estimate eye-to-screen distance; a pixel-controlled Landolt C row preserves an approximately five-arcminute visual angle; deterministic local code scores both eyes and builds the accessibility profile.
+SeeNA (See Now and Always) is a native iPhone research prototype for guided myopia screening and personalised digital accessibility. The phone stays stationary while the participant moves. ARKit face tracking, relative facial scale and Core Motion estimate eye-to-screen distance; a pixel-controlled Landolt C row preserves an approximately five-arcminute visual angle; deterministic local code scores both eyes and builds the accessibility profile.
 
-SEENA reports an **approximate myopia screening range**, never an eyeglass prescription or diagnosis. Numeric screening is locked until the exact physical iPhone has passed the built-in tape-measure calibration protocol. Unsupported, inconsistent or poor-quality conditions return no numeric result.
+SeeNA reports an **approximate myopia screening range**, never an eyeglass prescription or diagnosis. Numeric screening is locked until the exact physical iPhone has passed the built-in tape-measure calibration protocol. Unsupported, inconsistent or poor-quality conditions return no numeric result.
 
 ## What works
 
-- Native SwiftUI journey targeting iOS 16 and later, iPhone/portrait only.
+- Native SwiftUI iOS 26 POC, iPhone/portrait only, using a feature-level MVVM architecture.
+- Purposeful interactive onboarding, restrained Liquid Glass actions, gaze feedback, haptics and Reduce Motion support.
 - Eligibility and urgent-symptom safety stop, evaluated locally.
 - Camera and microphone permission flow with explicit privacy language.
 - Exact-hardware capability and screen-profile verification.
@@ -18,7 +19,7 @@ SEENA reports an **approximate myopia screening range**, never an eyeglass presc
 - Bounded `.m4a` recording, live `gpt-transcribe`, deterministic direction/choice parsing and operator fallback.
 - Separate spoken readability staircase and local word-edit-distance scoring.
 - Contrast, control size, read-aloud and simplified-content preferences.
-- Local accessibility profile applied to SEENA and a transformed essential-service fixture.
+- Local accessibility profile applied to SeeNA and a transformed essential-service fixture.
 - Strict `gpt-5.6-luna` Responses API explanations and content structures using `store: false`, no tools and Zod validation.
 - Deterministic fallback wording/content; OpenAI never calculates or receives a measurement number.
 - Protected local JSON history, evidence mode, sharing and deletion.
@@ -37,10 +38,10 @@ docs/        Architecture, validation and demonstration procedures
 Requirements:
 
 - Xcode 26.6 or another compatible current Xcode.
-- iOS 16 or later.
+- iOS 26 or later.
 - A physical Face ID iPhone for face tracking and numeric calibration. The simulator supports UI/fallback testing only.
 
-Open `SeeNA.xcodeproj`, select the `SeeNA` scheme and run. The app is compatible with iPhone 14-family and newer devices at the application level. Numeric screening is enabled separately per exact hardware identifier only after that physical device completes calibration; every other compatible iPhone receives the full accessibility assessment without a fabricated eye-power value.
+Open `SeeNA.xcodeproj`, select the `SeeNA` scheme and run on an iOS 26 simulator or physical iPhone. Numeric screening is enabled separately per exact hardware identifier only after that physical device completes calibration; every other compatible iPhone receives the full accessibility assessment without a fabricated eye-power value.
 
 Before a device/backend test, set these build settings to the deployed HTTPS backend and matching prototype token:
 
@@ -90,17 +91,7 @@ xcodebuild \
   build
 ```
 
-Installed-app compatibility matrices (build the simulator app first and pass its absolute path):
-
-```bash
-scripts/validate-iphone-matrix.sh \
-  /absolute/path/to/Build/Products/Debug-iphonesimulator/SeeNA.app
-
-scripts/validate-ios-runtime-matrix.sh \
-  /absolute/path/to/Build/Products/Debug-iphonesimulator/SeeNA.app
-```
-
-The device matrix boots and checks every installed iPhone 14–17 family variant: base, Plus/Air, Pro, Pro Max and `e` models where available. The runtime matrix checks an iPhone 14 on iOS 16.4, 17.5, 18.5 and 26.5. Each gate installs the app, requires a live launch process, captures a non-empty rendered screenshot, terminates the live process and shuts the simulator down. The project deployment target remains iOS 16.0, so the compiler also rejects any unguarded use of newer-only APIs.
+For this POC, simulator verification is deliberately narrow: compile once with Xcode 26, then install, launch and capture the core journey on one representative iOS 26 iPhone simulator. Physical TrueDepth, motion, microphone and distance accuracy still require a real device.
 
 Backend contracts, types and security:
 
@@ -116,4 +107,4 @@ Physical accuracy cannot be established in the simulator. Follow [docs/VALIDATIO
 
 Raw camera frames, face meshes, eye coordinates and biometric templates are never stored or sent to OpenAI. Only bounded response audio, non-identifying qualitative result facts and an allow-listed service-content fixture can leave the phone. Sessions remain in protected local storage and can be deleted in-app.
 
-SEENA v0 has not undergone clinical validation. It does not assess hyperopia, astigmatism, presbyopia or eye disease and is not a replacement for professional eye care.
+SeeNA v0 has not undergone clinical validation. It does not assess hyperopia, astigmatism, presbyopia or eye disease and is not a replacement for professional eye care.

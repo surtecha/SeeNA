@@ -206,10 +206,11 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         let centre = (left + right) / 2
         let eyeInCamera = simd_mul(simd_inverse(frame.camera.transform), SIMD4<Float>(centre.x, centre.y, centre.z, 1))
         let rawDistance = Double(abs(eyeInCamera.z))
-        let viewport = UIScreen.main.bounds.size
+        guard let screen = ScreenContext.active else { return }
+        let viewport = screen.bounds.size
         let projectedLeft = frame.camera.projectPoint(left, orientation: .portrait, viewportSize: viewport)
         let projectedRight = frame.camera.projectPoint(right, orientation: .portrait, viewportSize: viewport)
-        let interEyePixels = hypot(projectedLeft.x - projectedRight.x, projectedLeft.y - projectedRight.y) * UIScreen.main.scale
+        let interEyePixels = hypot(projectedLeft.x - projectedRight.x, projectedLeft.y - projectedRight.y) * screen.scale
         let angles = Self.eulerAnglesDegrees(face.transform)
         let profile = profileRegistry.profile()
         let estimate = fusion.estimate(

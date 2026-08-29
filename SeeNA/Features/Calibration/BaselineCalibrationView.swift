@@ -3,92 +3,126 @@ import SwiftUI
 struct BaselineCalibrationView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
-    @State private var didCapture = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var model: CalibrationViewModel
+
+    init(model: CalibrationViewModel) {
+        _model = State(initialValue: model)
+    }
 
     var body: some View {
-        ScreenScaffold(
-            title: "Set the 40 cm baseline",
-            subtitle: "Stand close, look at the centre, and move slowly until the circle turns green. Keep your head facing the phone."
+        ActionScaffold(
+            title: "Find 40 cm.",
+            subtitle: "Move until the ring closes.",
+            primaryTitle: model.primaryTitle,
+            primarySystemImage: model.primarySystemImage,
+            primaryEnabled: model.primaryEnabled,
+            primaryAction: { model.primaryAction(session: session) },
+            secondaryAction: FloatingAction(
+                title: "Hear guide",
+                systemImage: "speaker.wave.2",
+                action: model.replayGuide
+            )
         ) {
-            ZStack {
-                Circle()
-                    .stroke(didCapture ? SEENATheme.teal : readinessColor, lineWidth: 16)
-                    .frame(width: 210, height: 210)
-                VStack(spacing: 8) {
-                    Text(distanceText)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                    Text(didCapture ? "Baseline saved" : readinessText)
-                        .font(.headline)
-                }
-                .foregroundColor(SEENATheme.ink)
-            }
-            .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .combine)
+            CalibrationStage(model: model, reduceMotion: reduceMotion)
 
-            StatusRow(
-                title: "Phone",
-                detail: sample?.phoneStable == true ? "Stationary" : "Keep the phone completely still",
-                state: sample?.phoneStable == true ? .ready : .warning
-            )
-            StatusRow(
-                title: "Face and head",
-                detail: headReady ? "One face, looking forward" : "Centre your face and look forward",
-                state: headReady ? .ready : .warning
-            )
-
-            Button(didCapture ? "Baseline captured" : "Capture baseline") {
-                capture()
+            HStack(spacing: 10) {
+                CalibrationPill(
+                    title: model.sample?.phoneStable == true ? "PHONE STILL" : "KEEP PHONE STILL",
+                    symbol: "iphone",
+                    ready: model.sample?.phoneStable == true
+                )
+                CalibrationPill(
+                    title: model.headReady ? "GAZE CENTRED" : "LOOK AT CENTRE",
+                    symbol: "eye",
+                    ready: model.headReady
+                )
             }
-            .buttonStyle(PrimaryActionStyle())
-            .disabled(!isReady || didCapture)
 
-            if didCapture {
-                Button("Continue to right eye") { session.navigate(to: .rightEyeInstructions) }
-                    .buttonStyle(SecondaryActionStyle())
-            }
+            ProgressLine(title: model.instruction, value: model.proximityProgress)
+                .contentTransition(.interpolate)
+                .animation(.smooth(duration: 0.3), value: model.proximityProgress)
         }
-        .onAppear {
-            dependencies.brightness.applyScreeningBrightness()
-            dependencies.sensorCoordinator.start()
-            dependencies.spokenPrompts.speak("Stand close to the phone and look at the centre. Move slowly until the circle turns green.")
+        .onAppear { model.start() }
+        .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
+            model.observe(sample)
         }
         .navigationTitle("Calibration")
         .navigationBarTitleDisplayMode(.inline)
     }
+}
 
-    private var sample: DistanceSample? { session.sensorState }
+private struct CalibrationStage: View {
+    let model: CalibrationViewModel
+    let reduceMotion: Bool
 
-    private var measuredDistance: Double? {
-        sample?.correctedDistanceMetres ?? sample?.fusedDistanceMetres ?? sample?.rawARDistanceMetres
-    }
+    var body: some View {
+        VStack(spacing: 18) {
+            Text(model.didCapture ? "BASELINE SAVED" : "YOUR DISTANCE")
+                .font(.caption.weight(.bold))
+                .tracking(1.4)
+                .foregroundStyle(Color.white.opacity(0.55))
 
-    private var distanceText: String {
-        measuredDistance.map { String(format: "%.2f m", $0) } ?? "Finding you…"
-    }
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 2)
+                    .frame(width: 214, height: 214)
 
-    private var headReady: Bool {
-        guard let sample else { return false }
-        return sample.faceCount == 1 && abs(sample.headYawDegrees) <= 10 && abs(sample.headPitchDegrees) <= 10
-    }
+                Circle()
+                    .trim(from: 0, to: max(0.015, model.didCapture ? 1 : model.proximityProgress))
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .frame(width: 214, height: 214)
+                    .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.32), value: model.proximityProgress)
 
-    private var isReady: Bool {
-        guard let sample, let measuredDistance else { return false }
-        return (0.37...0.43).contains(measuredDistance)
-            && sample.phoneStable
-            && headReady
-            && sample.luminance >= 0.12
-    }
+                Circle()
+                    .fill(Color.white.opacity(model.isReady ? 0.13 : 0.04))
+                    .frame(width: model.isReady ? 174 : 144, height: model.isReady ? 174 : 144)
+                    .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.72), value: model.isReady)
 
-    private var readinessColor: Color { isReady ? SEENATheme.teal : SEENATheme.warning }
-    private var readinessText: String { isReady ? "Hold still" : "Move to 40 cm" }
-
-    private func capture() {
-        guard isReady, dependencies.sensorCoordinator.captureBaseline() else {
-            session.appError = .invalidState
-            return
+                VStack(spacing: 6) {
+                    if model.didCapture {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 50, weight: .bold))
+                            .contentTransition(.symbolEffect(.replace))
+                    } else {
+                        Text(model.distanceLabel)
+                            .font(.system(size: 42, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.white)
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                    }
+                    Text(model.instruction.uppercased())
+                        .font(.caption2.weight(.bold))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.white.opacity(0.62))
+                }
+            }
         }
-        session.activeSession.baselineDistanceMetres = measuredDistance
-        didCapture = true
-        dependencies.spokenPrompts.speak("Baseline saved. Cover your left eye next.")
+        .padding(22)
+        .frame(maxWidth: .infinity)
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Forty centimetre calibration")
+        .accessibilityValue("\(model.distanceLabel). \(model.instruction)")
+    }
+}
+
+private struct CalibrationPill: View {
+    let title: String
+    let symbol: String
+    let ready: Bool
+
+    var body: some View {
+        Label(title, systemImage: ready ? "checkmark" : symbol)
+            .font(.caption2.weight(.bold))
+            .tracking(0.35)
+            .foregroundStyle(ready ? Color.white : SEENATheme.secondaryInk)
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .background(ready ? Color.black : SEENATheme.card, in: Capsule())
+            .animation(.snappy(duration: 0.3), value: ready)
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(ready ? "Ready" : "Not ready")
     }
 }

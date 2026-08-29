@@ -85,14 +85,15 @@ final class DeviceProfileRegistry {
     }
 
     private func screenMatches(_ profile: DeviceProfile) -> Bool {
-        let bounds = UIScreen.main.nativeBounds
+        guard let screen = ScreenContext.active else { return false }
+        let bounds = screen.nativeBounds
         let runtimeWidth = Int(min(bounds.width, bounds.height).rounded())
         let runtimeHeight = Int(max(bounds.width, bounds.height).rounded())
         let profileWidth = min(profile.nativePixelWidth, profile.nativePixelHeight)
         let profileHeight = max(profile.nativePixelWidth, profile.nativePixelHeight)
         return runtimeWidth == profileWidth
             && runtimeHeight == profileHeight
-            && abs(Double(UIScreen.main.nativeScale) - profile.displayScale) < 0.01
+            && abs(Double(screen.nativeScale) - profile.displayScale) < 0.01
     }
 
     private static func loadBundledProfiles() -> [DeviceProfile] {

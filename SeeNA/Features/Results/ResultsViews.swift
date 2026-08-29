@@ -77,12 +77,12 @@ struct ProcessingView: View {
     static func fallbackExplanation(for request: ExplanationRequest) -> ExplanationResponse {
         let isUnreliable = request.actionCode == "no_reliable_result" || request.actionCode == "accessibility_only"
         return ExplanationResponse(
-            headline: isUnreliable ? "No reliable numeric screening result was obtained." : "Your SEENA screening is ready to review.",
+            headline: isUnreliable ? "No reliable numeric screening result was obtained." : "Your SeeNA screening is ready to review.",
             plainMeaning: request.comparison,
             limitations: [
                 "This research prototype is not an eyeglass prescription.",
                 "It does not assess hyperopia, astigmatism or eye disease.",
-                "SEENA v0 has not undergone clinical validation."
+                "SeeNA v0 has not undergone clinical validation."
             ],
             nextSteps: ["Arrange a complete professional eye examination when accessible."],
             disclaimer: "Research prototype only — not a diagnosis or prescription.",
@@ -97,7 +97,7 @@ struct ResultsView: View {
 
     var body: some View {
         ScreenScaffold(
-            title: "SEENA screening result",
+            title: "SeeNA screening result",
             subtitle: session.cachedExplanation?.headline ?? "Review the locally calculated result and its limitations."
         ) {
             if let right = session.activeSession.rightEyeResult {
@@ -162,7 +162,7 @@ struct ResultsView: View {
     }
 
     private var shareText: String {
-        var lines = ["SEENA research-prototype screening — not a prescription."]
+        var lines = ["SeeNA research-prototype screening — not a prescription."]
         for result in [session.activeSession.rightEyeResult, session.activeSession.leftEyeResult].compactMap({ $0 }) {
             lines.append("\(result.eye.displayName) eye: \(EyeResultCard.summary(for: result))")
         }

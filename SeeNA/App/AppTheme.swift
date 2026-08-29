@@ -14,7 +14,121 @@ enum SEENATheme {
     static let danger = Color(red: 0.72, green: 0.12, blue: 0.13)
     static let warning = Color(red: 0.72, green: 0.42, blue: 0.04)
 
-    static let prototypeFooter = "Research prototype — not a prescription. Verify health decisions with a qualified professional."
+    static let prototypeFooter = "Research prototype · not a prescription"
+}
+
+struct SEENABackdrop: View {
+    var body: some View {
+        ZStack {
+            SEENATheme.background
+
+            Circle()
+                .fill(Color.black.opacity(0.035))
+                .frame(width: 320, height: 320)
+                .blur(radius: 34)
+                .offset(x: 170, y: -290)
+
+            Circle()
+                .fill(Color.black.opacity(0.025))
+                .frame(width: 280, height: 280)
+                .blur(radius: 44)
+                .offset(x: -190, y: 360)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+struct FloatingAction {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+}
+
+struct ActionScaffold<Content: View>: View {
+    let eyebrow: String
+    let title: String
+    let subtitle: String?
+    let primaryTitle: String
+    let primarySystemImage: String
+    let primaryEnabled: Bool
+    let primaryAction: () -> Void
+    let secondaryAction: FloatingAction?
+    @ViewBuilder let content: Content
+
+    init(
+        eyebrow: String = "SeeNA",
+        title: String,
+        subtitle: String? = nil,
+        primaryTitle: String,
+        primarySystemImage: String = "arrow.right",
+        primaryEnabled: Bool = true,
+        primaryAction: @escaping () -> Void,
+        secondaryAction: FloatingAction? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.eyebrow = eyebrow
+        self.title = title
+        self.subtitle = subtitle
+        self.primaryTitle = primaryTitle
+        self.primarySystemImage = primarySystemImage
+        self.primaryEnabled = primaryEnabled
+        self.primaryAction = primaryAction
+        self.secondaryAction = secondaryAction
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            SEENABackdrop()
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 24) {
+                    PageHeader(eyebrow: eyebrow, title: title, subtitle: subtitle)
+                    content
+                }
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 132)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 7) {
+                GlassEffectContainer(spacing: 12) {
+                    HStack(spacing: 12) {
+                        if let secondaryAction {
+                            Button(action: secondaryAction.action) {
+                                Image(systemName: secondaryAction.systemImage)
+                                    .font(.headline.weight(.semibold))
+                                    .frame(width: 54, height: 54)
+                            }
+                            .buttonStyle(.glass)
+                            .accessibilityLabel(secondaryAction.title)
+                        }
+
+                        Button(action: primaryAction) {
+                            Label(primaryTitle, systemImage: primarySystemImage)
+                                .font(.headline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(SEENATheme.ink)
+                        .disabled(!primaryEnabled)
+                    }
+                }
+
+                Text(SEENATheme.prototypeFooter)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(SEENATheme.tertiaryInk)
+                    .accessibilityLabel("Research prototype. This is not an eyeglass prescription or diagnosis.")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+        }
+    }
 }
 
 struct PrimaryActionStyle: ButtonStyle {
@@ -64,7 +178,7 @@ struct ScreenScaffold<Content: View>: View {
     @ViewBuilder let content: Content
 
     init(
-        eyebrow: String = "SEENA",
+        eyebrow: String = "SeeNA",
         title: String,
         subtitle: String? = nil,
         @ViewBuilder content: () -> Content
@@ -76,18 +190,21 @@ struct ScreenScaffold<Content: View>: View {
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
-                PageHeader(eyebrow: eyebrow, title: title, subtitle: subtitle)
-                content
+        ZStack {
+            SEENABackdrop()
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 24) {
+                    PageHeader(eyebrow: eyebrow, title: title, subtitle: subtitle)
+                    content
+                }
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 680, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.top, 24)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity)
         }
-        .background(SEENATheme.background.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             DisclaimerFooter()
         }
@@ -98,6 +215,7 @@ struct PageHeader: View {
     let eyebrow: String
     let title: String
     let subtitle: String?
+    @ScaledMetric(relativeTo: .largeTitle) private var titleSize = 42.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -107,7 +225,7 @@ struct PageHeader: View {
                 .foregroundStyle(SEENATheme.secondaryInk)
 
             Text(title)
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .font(.system(size: titleSize, weight: .bold, design: .rounded))
                 .foregroundStyle(SEENATheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
@@ -169,8 +287,8 @@ struct DisclaimerFooter: View {
             .lineSpacing(2)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
             .background(SEENATheme.background)
             .overlay(alignment: .top) {
                 Rectangle()
