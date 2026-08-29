@@ -134,6 +134,7 @@ final class PhoneSetupViewModel {
 
     func start() {
         sensors.start()
+        prompts.preloadNavigationGuidance()
         prompts.speak("Set the phone upright at eye level. Step into view, then let go.")
     }
 
@@ -206,9 +207,14 @@ final class PhoneSetupViewModel {
 final class CalibrationViewModel {
     private(set) var sample: DistanceSample?
     private(set) var didCapture = false
+    private(set) var guidedDistance: Double?
+    private(set) var isInTargetZone = false
     private var announcedReady = false
-    private var readySince: Date?
+    private var targetReady = false
     private var isAdvancing = false
+    private var distanceFilter = RobustDistanceFilter()
+    private var targetTracker = DistanceTargetTracker()
+    private var voiceScheduler = VoiceGuidanceScheduler()
 
     private let sensors: SensorCoordinator
     private let prompts: SpokenPromptService
@@ -221,7 +227,7 @@ final class CalibrationViewModel {
     }
 
     var measuredDistance: Double? {
-        sample?.correctedDistanceMetres ?? sample?.fusedDistanceMetres ?? sample?.rawARDistanceMetres
+        guidedDistance
     }
 
     var distanceLabel: String {
@@ -240,8 +246,7 @@ final class CalibrationViewModel {
     }
 
     var isReady: Bool {
-        guard let measuredDistance else { return false }
-        return (0.37...0.43).contains(measuredDistance) && trackingReady
+        targetReady && trackingReady
     }
 
     var proximityProgress: Double {
@@ -269,27 +274,45 @@ final class CalibrationViewModel {
     func start() {
         brightness.applyScreeningBrightness()
         sensors.start()
-        prompts.speak("Move to forty centimetres.")
+        prompts.preloadNavigationGuidance()
+        voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
+        prompts.speak("Step into view. I will guide you to forty centimetres.")
     }
 
     func observe(_ sample: DistanceSample?, session: AppSession) {
         self.sample = sample
-        if isReady && !announcedReady {
+        let measured = sample.flatMap {
+            $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
+        }
+        guidedDistance = distanceFilter.update(measured)
+        let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
+            ?? Date().timeIntervalSinceReferenceDate
+        let cue = conditionCue(for: sample)
+            ?? guidedDistance.map { DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: 0.40) }
+            ?? .findFace
+        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
+            prompts.speak(cue.spokenText)
+        }
+
+        let state = targetTracker.update(
+            distance: guidedDistance,
+            target: 0.40,
+            conditionsReady: trackingReady,
+            timestamp: timestamp
+        )
+        isInTargetZone = state.isInTargetZone
+        targetReady = state.isReady
+
+        if isInTargetZone && !announcedReady {
             announcedReady = true
             HapticFeedback.success()
-        } else if !isReady {
+        } else if !isInTargetZone {
             announcedReady = false
         }
 
-
         if isReady, !didCapture, !isAdvancing {
-            readySince = readySince ?? Date()
-            if Date().timeIntervalSince(readySince ?? Date()) >= 0.8 {
-                isAdvancing = true
-                capture(session: session, shouldAdvance: true)
-            }
-        } else if !isReady {
-            readySince = nil
+            isAdvancing = true
+            capture(session: session, shouldAdvance: true)
         }
     }
 
@@ -304,13 +327,33 @@ final class CalibrationViewModel {
 
     func replayGuide() {
         HapticFeedback.selection()
-        prompts.speak("Move to forty centimetres, look at the centre, and keep the phone completely still.")
+        voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
+        prompts.speak("I will guide you to forty centimetres. Face the phone and follow the voice.")
+    }
+
+    private func conditionCue(for sample: DistanceSample?) -> DistanceGuidanceCue? {
+        guard let sample, sample.faceCount == 1 else { return .findFace }
+        if !sample.phoneStable { return .waitForPhone }
+        if sample.luminance < 0.12 { return .addLight }
+        if abs(sample.headYawDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            || abs(sample.headPitchDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees {
+            return .facePhone
+        }
+        return nil
     }
 
     private func capture(session: AppSession, shouldAdvance: Bool) {
-        guard isReady, sensors.captureBaseline() else {
+        guard isReady else {
             HapticFeedback.warning()
-            session.appError = .invalidState
+            return
+        }
+        guard sensors.captureBaseline() else {
+            isAdvancing = false
+            targetReady = false
+            isInTargetZone = false
+            targetTracker.reset()
+            HapticFeedback.warning()
+            prompts.speak("Hold still. I will try the distance again.")
             return
         }
         session.activeSession.baselineDistanceMetres = measuredDistance

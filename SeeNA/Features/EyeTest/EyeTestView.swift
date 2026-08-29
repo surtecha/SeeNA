@@ -131,19 +131,10 @@ struct EyeTestView: View {
         }
     }
 
-    private var sample: DistanceSample? { session.sensorState }
-    private var currentDistance: Double? { sample?.correctedDistanceMetres ?? sample?.fusedDistanceMetres }
+    private var currentDistance: Double? { model.currentDistance }
     private var currentDistanceText: String { currentDistance.map { String(format: "%.2f m", $0) } ?? "—" }
-    private var isAtDistance: Bool {
-        guard let currentDistance else { return false }
-        return abs(currentDistance - model.targetDistance) <= (model.targetDistance < 1 ? 0.04 : 0.05)
-    }
-    private var distanceInstruction: String {
-        guard let currentDistance else { return "MOVE INTO VIEW" }
-        if currentDistance < model.targetDistance - 0.04 { return "MOVE BACK" }
-        if currentDistance > model.targetDistance + 0.05 { return "MOVE CLOSER" }
-        return sample?.phoneStable == true ? "HOLD STILL" : "STOP MOVING"
-    }
+    private var isAtDistance: Bool { model.isInTargetZone }
+    private var distanceInstruction: String { model.guidanceCue.displayText }
     private var geometry: OptotypeGeometry? {
         guard let profile = session.activeSession.deviceProfile else { return nil }
         return OptotypeGeometry.calculate(

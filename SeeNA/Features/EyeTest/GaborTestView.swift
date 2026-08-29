@@ -64,8 +64,10 @@ struct GaborTestView: View {
             VStack(spacing: 18) {
                 Image(systemName: "figure.stand")
                     .font(.system(size: 64, weight: .light))
-                Text("Move close to the phone")
-                    .font(.title3.weight(.semibold))
+                Text(model.guidanceCue.displayText)
+                    .font(.title2.weight(.bold))
+                Text(model.currentDistance.map { String(format: "%.2f m", $0) } ?? "—")
+                    .font(.system(size: 34, weight: .bold, design: .monospaced))
                 if model.phase == .stabilising {
                     ProgressView(value: model.stabilityProgress)
                         .tint(.black)

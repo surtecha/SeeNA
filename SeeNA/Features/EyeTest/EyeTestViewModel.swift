@@ -36,12 +36,19 @@ final class EyeTestViewModel: ObservableObject {
     @Published private(set) var lastTranscript: String?
     @Published private(set) var isRunningBlock = false
     @Published private(set) var readyProgress = 0.0
+    @Published private(set) var currentDistance: Double?
+    @Published private(set) var guidanceCue: DistanceGuidanceCue = .findFace
+    @Published private(set) var isInTargetZone = false
     @Published var showingOperatorInput = false
 
     private var engine: ThresholdSearchEngine
-    private var readySince: Date?
     private var mostRecentSample: DistanceSample?
     private var hasExplainedResizing = false
+    private var distanceFilter = RobustDistanceFilter()
+    private var targetTracker = DistanceTargetTracker()
+    private var voiceScheduler = VoiceGuidanceScheduler()
+    private var blockLaunchPending = false
+    private var blockSamples: [DistanceSample] = []
 
     init(eye: Eye) {
         self.eye = eye
@@ -65,43 +72,74 @@ final class EyeTestViewModel: ObservableObject {
     func begin(using dependencies: AppDependencies) {
         guard candidate != nil else { return }
         phase = .guiding
+        dependencies.spokenPrompts.preloadNavigationGuidance()
         announceGuidance(using: dependencies)
     }
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
         mostRecentSample = sample
-        guard !isRunningBlock, candidate != nil, let sample else { return }
-        let current = sample.correctedDistanceMetres ?? sample.fusedDistanceMetres
-        let tolerance = targetDistance < 1 ? 0.04 : 0.05
-        let withinDistance = current.map { abs($0 - targetDistance) <= tolerance } ?? false
-        let validPose = sample.faceCount == 1
-            && sample.phoneStable
-            && abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
-            && abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
-            && sample.luminance >= 0.12
+        if isRunningBlock, let sample {
+            blockSamples.append(sample)
+            if blockSamples.count > 900 { blockSamples.removeFirst(blockSamples.count - 900) }
+        }
 
-        if withinDistance && validPose {
-            if readySince == nil { readySince = Date() }
-            readyProgress = min(1, Date().timeIntervalSince(readySince ?? Date()) / 0.8)
+        let measured = sample.flatMap {
+            $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
+        }
+        currentDistance = distanceFilter.update(measured)
+        guard !isRunningBlock, !blockLaunchPending, candidate != nil else { return }
+
+        let validPose = sample.map {
+            $0.faceCount == 1
+            && $0.phoneStable
+            && abs($0.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            && abs($0.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            && $0.luminance >= 0.12
+        } == true
+        let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
+            ?? Date().timeIntervalSinceReferenceDate
+        let cue = conditionCue(for: sample)
+            ?? currentDistance.map { DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: targetDistance) }
+            ?? .findFace
+        guidanceCue = cue
+        announce(cue, at: timestamp, using: dependencies)
+
+        let targetState = targetTracker.update(
+            distance: currentDistance,
+            target: targetDistance,
+            conditionsReady: validPose,
+            timestamp: timestamp
+        )
+        isInTargetZone = targetState.isInTargetZone
+        readyProgress = targetState.progress
+
+        if targetState.isInTargetZone {
             phase = .stabilising
-            if readyProgress >= 1 {
-                readySince = nil
+            if targetState.isReady {
+                targetTracker.reset()
                 readyProgress = 0
+                blockLaunchPending = true
+                HapticFeedback.success()
                 Task { await runVoiceBlock(dependencies: dependencies, session: session) }
             }
         } else {
-            readySince = nil
-            readyProgress = 0
             phase = .guiding
         }
     }
 
     func runVoiceBlock(dependencies: AppDependencies, session: AppSession) async {
-        guard !isRunningBlock, candidate != nil else { return }
+        guard !isRunningBlock, candidate != nil else {
+            blockLaunchPending = false
+            return
+        }
+        blockLaunchPending = false
         isRunningBlock = true
+        blockSamples.removeAll(keepingCapacity: true)
         if targets.count != 7 { targets = Self.randomDirections() }
         phase = .presenting
-        await dependencies.spokenPrompts.speakAndWait("Seven rings. Say each opening, left to right.")
+        await dependencies.spokenPrompts.speakAndWait(
+            "You are in position. Starting now. Seven rings. Say the openings from left to right."
+        )
 
         do {
             phase = .recording
@@ -169,10 +207,17 @@ final class EyeTestViewModel: ObservableObject {
         dependencies: AppDependencies,
         session: AppSession
     ) async {
+        let capturedDistances = Statistics.rejectOutliersMAD(
+            blockSamples.compactMap {
+                $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
+            }
+        )
         guard let candidate,
               let profile = session.activeSession.deviceProfile,
               let sample = mostRecentSample,
-              let actualDistance = sample.correctedDistanceMetres ?? sample.fusedDistanceMetres else {
+              let actualDistance = Statistics.median(capturedDistances)
+                ?? sample.correctedDistanceMetres
+                ?? sample.fusedDistanceMetres else {
             phase = .retry("Distance tracking was lost. Return to the target distance.")
             isRunningBlock = false
             return
@@ -200,7 +245,9 @@ final class EyeTestViewModel: ObservableObject {
             candidateDiopter: candidate.diopter,
             targetDistanceMetres: candidate.distanceMetres,
             actualMedianDistanceMetres: actualDistance,
-            distanceStandardDeviation: sample.distanceStandardDeviation ?? .infinity,
+            distanceStandardDeviation: Statistics.standardDeviation(capturedDistances)
+                ?? sample.distanceStandardDeviation
+                ?? .infinity,
             targets: targets,
             responses: responses,
             correctCount: correct,
@@ -233,16 +280,44 @@ final class EyeTestViewModel: ObservableObject {
     }
 
     private func announceGuidance(using dependencies: AppDependencies) {
-        let distance = targetDistance
-        let movement = String(format: "Move to %.2f metres.", distance)
-        if hasExplainedResizing {
-            dependencies.spokenPrompts.speak(movement)
+        targetTracker.reset()
+        readyProgress = 0
+        isInTargetZone = false
+        let now = Date().timeIntervalSinceReferenceDate
+        voiceScheduler.begin(at: now)
+
+        let movement: String
+        if let currentDistance,
+           abs(currentDistance - targetDistance) <= DistanceGuidanceEngine.entryTolerance(for: targetDistance) {
+            movement = "Stay where you are."
+        } else if let currentDistance, currentDistance > targetDistance {
+            movement = "Walk towards the phone. I will tell you when to stop."
         } else {
-            hasExplainedResizing = true
-            dependencies.spokenPrompts.speak(
-                "The rings resize as you move. \(movement)"
-            )
+            movement = "Walk backwards slowly. I will tell you when to stop."
         }
+        let prompt = hasExplainedResizing ? movement : "The rings resize as you move. \(movement)"
+        hasExplainedResizing = true
+        dependencies.spokenPrompts.speak(prompt)
+    }
+
+    private func conditionCue(for sample: DistanceSample?) -> DistanceGuidanceCue? {
+        guard let sample, sample.faceCount == 1 else { return .findFace }
+        if !sample.phoneStable { return .waitForPhone }
+        if sample.luminance < 0.12 { return .addLight }
+        if abs(sample.headYawDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            || abs(sample.headPitchDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees {
+            return .facePhone
+        }
+        return nil
+    }
+
+    private func announce(
+        _ cue: DistanceGuidanceCue,
+        at timestamp: TimeInterval,
+        using dependencies: AppDependencies
+    ) {
+        guard voiceScheduler.shouldAnnounce(cue, at: timestamp) else { return }
+        dependencies.spokenPrompts.speak(cue.spokenText)
     }
 
     private func qualityMessage(_ quality: BlockQuality) -> String {

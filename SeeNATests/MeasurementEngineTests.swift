@@ -2,6 +2,50 @@ import XCTest
 @testable import SEENACore
 
 final class MeasurementEngineTests: XCTestCase {
+    func testDistanceGuidanceUsesStepsAndStopsInsideFarTolerance() {
+        XCTAssertEqual(
+            DistanceGuidanceEngine.cue(currentDistance: 0.40, targetDistance: 2.00),
+            .moveBack(steps: 5)
+        )
+        XCTAssertEqual(
+            DistanceGuidanceEngine.cue(currentDistance: 2.70, targetDistance: 2.00),
+            .moveCloser(steps: 2)
+        )
+        XCTAssertEqual(
+            DistanceGuidanceEngine.cue(currentDistance: 1.93, targetDistance: 2.00),
+            .tinyStepBack
+        )
+        XCTAssertEqual(
+            DistanceGuidanceEngine.cue(currentDistance: 1.96, targetDistance: 2.00),
+            .stop
+        )
+    }
+
+    func testFarTargetLockSurvivesNormalHeadMovementAndStartsQuickly() {
+        var tracker = DistanceTargetTracker()
+        var state = tracker.update(distance: 2.00, target: 2.00, conditionsReady: true, timestamp: 0)
+        XCTAssertTrue(state.isInTargetZone)
+        XCTAssertFalse(state.isReady)
+
+        state = tracker.update(distance: 2.08, target: 2.00, conditionsReady: true, timestamp: 0.20)
+        XCTAssertTrue(state.isInTargetZone)
+        state = tracker.update(distance: 2.12, target: 2.00, conditionsReady: true, timestamp: 0.30)
+        XCTAssertTrue(state.isInTargetZone, "One noisy frame must not throw the user out of position")
+        state = tracker.update(distance: 1.99, target: 2.00, conditionsReady: true, timestamp: 0.50)
+        XCTAssertTrue(state.isInTargetZone)
+        state = tracker.update(distance: 2.04, target: 2.00, conditionsReady: true, timestamp: 0.70)
+        XCTAssertTrue(state.isReady, "The far target should lock in well under one second")
+    }
+
+    func testDistanceFilterRejectsSingleFarRangeJump() throws {
+        var filter = RobustDistanceFilter(windowSize: 9)
+        for value in [1.99, 2.00, 2.01, 2.00, 1.98, 2.01, 2.00, 1.99] {
+            _ = filter.update(value)
+        }
+        let filtered = try XCTUnwrap(filter.update(1.60))
+        XCTAssertEqual(filtered, 2.00, accuracy: 0.015)
+    }
+
     func testGazeAlignmentAtCameraHasNoAngularError() throws {
         let alignment = try XCTUnwrap(
             GazeAlignmentEngine.errors(

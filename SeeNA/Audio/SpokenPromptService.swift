@@ -10,6 +10,8 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
     private var playbackTask: Task<Void, Never>?
     private var pendingContinuation: CheckedContinuation<Void, Never>?
     private var requestID = UUID()
+    private var preloadTasks: [String: Task<Data?, Never>] = [:]
+    private var preloadBatchTask: Task<Void, Never>?
 
     init(backend: BackendClient) {
         self.backend = backend
@@ -29,6 +31,12 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         stop()
         let id = requestID
         await renderAndPlay(text, language: language, requestID: id)
+    }
+
+    /// Warms the finite navigation vocabulary while the user completes setup,
+    /// so live movement cues keep the natural backend voice without network lag.
+    func preloadNavigationGuidance(language: String = "en-AU") {
+        preload(DistanceGuidanceCue.preloadTexts, language: language)
     }
 
     func stop() {
@@ -55,18 +63,72 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
     }
 
     private func renderAndPlay(_ text: String, language: String, requestID: UUID) async {
-        let key = "\(language)|\(text)" as NSString
-        let data: Data?
-        if let cached = cache.object(forKey: key) {
-            data = cached as Data
-        } else {
-            data = try? await backend.speech(text: text, locale: language)
-            if let data { cache.setObject(data as NSData, forKey: key) }
-        }
+        let data = await audioData(for: text, language: language)
 
         guard !Task.isCancelled, requestID == self.requestID else { return }
         if let data, await play(data: data) { return }
         await speakWithSystemVoice(text, language: language)
+    }
+
+    private func preload(_ texts: [String], language: String) {
+        guard preloadBatchTask == nil else { return }
+        var seen: Set<String> = []
+        let pending = texts.filter { text in
+            let key = cacheKey(text: text, language: language)
+            return seen.insert(key).inserted
+                && cache.object(forKey: key as NSString) == nil
+                && preloadTasks[key] == nil
+        }
+        guard !pending.isEmpty else { return }
+        preloadBatchTask = Task { [weak self] in
+            guard let self else { return }
+            await runPreloadQueue(pending, language: language)
+            preloadBatchTask = nil
+        }
+    }
+
+    private func runPreloadQueue(_ texts: [String], language: String) async {
+        let batchSize = 4
+        for start in stride(from: 0, to: texts.count, by: batchSize) {
+            guard !Task.isCancelled else { return }
+            let batch = Array(texts[start..<min(texts.count, start + batchSize)])
+            var tasks: [(key: String, task: Task<Data?, Never>)] = []
+            for text in batch {
+                let key = cacheKey(text: text, language: language)
+                guard cache.object(forKey: key as NSString) == nil else { continue }
+                let task = Task { [backend] in
+                    try? await backend.speech(text: text, locale: language)
+                }
+                preloadTasks[key] = task
+                tasks.append((key, task))
+            }
+            for (key, task) in tasks {
+                if let data = await task.value {
+                    cache.setObject(data as NSData, forKey: key as NSString)
+                }
+                preloadTasks[key] = nil
+            }
+        }
+    }
+
+    private func audioData(for text: String, language: String) async -> Data? {
+        let key = cacheKey(text: text, language: language)
+        if let cached = cache.object(forKey: key as NSString) {
+            return cached as Data
+        }
+        if let preloadTask = preloadTasks[key] {
+            let data = await preloadTask.value
+            if let data { cache.setObject(data as NSData, forKey: key as NSString) }
+            preloadTasks[key] = nil
+            return data
+        }
+        let data = try? await backend.speech(text: text, locale: language)
+        if let data { cache.setObject(data as NSData, forKey: key as NSString) }
+        return data
+    }
+
+    private func cacheKey(text: String, language: String) -> String {
+        "\(language)|\(text)"
     }
 
     private func play(data: Data) async -> Bool {

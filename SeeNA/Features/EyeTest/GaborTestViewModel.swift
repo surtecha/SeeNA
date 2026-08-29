@@ -31,10 +31,15 @@ final class GaborTestViewModel: ObservableObject {
     @Published private(set) var contrast = GaborContrastEngine.contrastLevels[0]
     @Published private(set) var isRunning = false
     @Published private(set) var stabilityProgress = 0.0
+    @Published private(set) var currentDistance: Double?
+    @Published private(set) var guidanceCue: DistanceGuidanceCue = .findFace
 
     private var engine: GaborContrastEngine
-    private var readySince: Date?
     private var announcedMove = false
+    private var distanceFilter = RobustDistanceFilter()
+    private var targetTracker = DistanceTargetTracker()
+    private var voiceScheduler = VoiceGuidanceScheduler()
+    private var blockLaunchPending = false
 
     init(eye: Eye) {
         self.eye = eye
@@ -44,32 +49,53 @@ final class GaborTestViewModel: ObservableObject {
     func begin(using dependencies: AppDependencies) {
         guard !announcedMove else { return }
         announcedMove = true
+        dependencies.spokenPrompts.preloadNavigationGuidance()
+        voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
         dependencies.spokenPrompts.speak(
-            "Keep that eye covered. Move close."
+            "Keep that eye covered. Walk towards the phone. I will tell you when to stop."
         )
     }
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
-        guard !isRunning, let sample else { return }
-        let distance = sample.correctedDistanceMetres ?? sample.fusedDistanceMetres ?? sample.rawARDistanceMetres
-        let ready = distance.map { (0.37...0.43).contains($0) } == true
-            && sample.faceCount == 1
-            && sample.phoneStable
-            && abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
-            && abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
-            && sample.luminance >= 0.12
+        let measured = sample.flatMap {
+            $0.correctedDistanceMetres ?? $0.fusedDistanceMetres ?? $0.rawARDistanceMetres
+        }
+        currentDistance = distanceFilter.update(measured)
+        guard !isRunning, !blockLaunchPending else { return }
+        let conditionsReady = sample.map {
+            $0.faceCount == 1
+                && $0.phoneStable
+                && abs($0.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+                && abs($0.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+                && $0.luminance >= 0.12
+        } == true
+        let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
+            ?? Date().timeIntervalSinceReferenceDate
+        let cue = conditionCue(for: sample)
+            ?? currentDistance.map { DistanceGuidanceEngine.cue(currentDistance: $0, targetDistance: 0.40) }
+            ?? .findFace
+        guidanceCue = cue
+        if voiceScheduler.shouldAnnounce(cue, at: timestamp) {
+            dependencies.spokenPrompts.speak(cue.spokenText)
+        }
 
-        if ready {
-            readySince = readySince ?? Date()
-            stabilityProgress = min(1, Date().timeIntervalSince(readySince ?? Date()) / 0.8)
+        let state = targetTracker.update(
+            distance: currentDistance,
+            target: 0.40,
+            conditionsReady: conditionsReady,
+            timestamp: timestamp
+        )
+        stabilityProgress = state.progress
+        if state.isInTargetZone {
             phase = .stabilising
-            if stabilityProgress >= 1 {
-                readySince = nil
+            if state.isReady {
+                targetTracker.reset()
                 stabilityProgress = 0
+                blockLaunchPending = true
+                HapticFeedback.success()
                 Task { await runBlock(dependencies: dependencies, session: session) }
             }
         } else {
-            readySince = nil
             stabilityProgress = 0
             if case .retry = phase { return }
             phase = .moving
@@ -81,14 +107,21 @@ final class GaborTestViewModel: ObservableObject {
     }
 
     private func runBlock(dependencies: AppDependencies, session: AppSession) async {
-        guard !isRunning else { return }
-        guard case .test(let level) = engine.nextAction else { return }
+        guard !isRunning else {
+            blockLaunchPending = false
+            return
+        }
+        guard case .test(let level) = engine.nextAction else {
+            blockLaunchPending = false
+            return
+        }
+        blockLaunchPending = false
         isRunning = true
         contrast = level
         targets = (0..<7).map { _ in GaborOrientation.allCases.randomElement() ?? .left }
         phase = .presenting
         await dependencies.spokenPrompts.speakAndWait(
-            "Seven stripes. Say left or right, in order."
+            "You are in position. Starting now. Seven stripes. Say left or right, in order."
         )
 
         do {
@@ -155,5 +188,16 @@ final class GaborTestViewModel: ObservableObject {
     private func retry(_ message: String) {
         isRunning = false
         phase = .retry(message)
+    }
+
+    private func conditionCue(for sample: DistanceSample?) -> DistanceGuidanceCue? {
+        guard let sample, sample.faceCount == 1 else { return .findFace }
+        if !sample.phoneStable { return .waitForPhone }
+        if sample.luminance < 0.12 { return .addLight }
+        if abs(sample.headYawDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            || abs(sample.headPitchDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees {
+            return .facePhone
+        }
+        return nil
     }
 }
