@@ -1,0 +1,33 @@
+{
+  "composition" : "60-second product journey with a clean final result hold, followed by the complete results walkthrough fitted to 20 seconds; all audio removed",
+  "generatedAtUTC" : "2026-08-29T23:52:34Z",
+  "output" : {
+    "audioTrackCount" : 0,
+    "bytes" : 24424403,
+    "durationSeconds" : 80,
+    "filename" : "SeeNA-Product-Walkthrough-80s-Muted.mp4",
+    "framesPerSecond" : 30,
+    "height" : 2622,
+    "muted" : true,
+    "sha256" : "d14a1fea5d6c8cd950e43b944f8200c6884e9911755c6cd847a233d7a5b1f2bc",
+    "videoTrackCount" : 1,
+    "width" : 1206
+  },
+  "schemaVersion" : 1,
+  "sources" : [
+    {
+      "bytes" : 13676139,
+      "filename" : "SeeNA-Hackathon-Demo-60s.mp4",
+      "sha256" : "00e494d5df6dbce56acf1642a9bce0e7c593d639030d91d3cedf97f6acbfabf3",
+      "sourceDurationSeconds" : 60,
+      "timelineDurationSeconds" : 55
+    },
+    {
+      "bytes" : 20598720,
+      "filename" : "SeeNA-results-simulator-capture.mp4",
+      "sha256" : "c1336b7f1a8e94610a2ec7d025cb224561849c0ac19ed45f27d83fa79bd1287c",
+      "sourceDurationSeconds" : 32.403333333333336,
+      "timelineDurationSeconds" : 25
+    }
+  ]
+}
