@@ -1,0 +1,22 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Node / Vercel
+node_modules/
+.vercel/
+server/.env
+server/.env.*
+!server/.env.example
+coverage/
+
+# macOS
+.DS_Store
