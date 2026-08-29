@@ -151,6 +151,7 @@ final class AppSession: ObservableObject {
         case "permissions": return .permissions
         case "phone-setup": return .phoneSetup
         case "calibration": return .calibration
+        case "processing": return .processing
         default: return nil
         }
     }

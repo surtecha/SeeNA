@@ -1,0 +1,3 @@
+// Shared target configuration. Local backend credentials are optional so the
+// project still builds in CI and from a clean clone.
+#include? "Secrets.xcconfig"

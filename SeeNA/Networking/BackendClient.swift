@@ -5,12 +5,25 @@ struct NetworkConfiguration: Sendable {
     let appToken: String
 
     static var bundle: NetworkConfiguration {
-        let rawURL = Bundle.main.object(forInfoDictionaryKey: "SEENA_BACKEND_URL") as? String
-        let token = Bundle.main.object(forInfoDictionaryKey: "SEENA_APP_TOKEN") as? String
+        let localSecrets = bundledSecrets()
+        let rawURL = localSecrets["SEENA_BACKEND_URL"]
+            ?? Bundle.main.object(forInfoDictionaryKey: "SEENA_BACKEND_URL") as? String
+        let token = localSecrets["SEENA_APP_TOKEN"]
+            ?? Bundle.main.object(forInfoDictionaryKey: "SEENA_APP_TOKEN") as? String
         return NetworkConfiguration(
             baseURL: rawURL.flatMap(URL.init(string:)),
             appToken: token ?? "seena-v0-prototype"
         )
+    }
+
+    private static func bundledSecrets() -> [String: String] {
+        guard let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let values = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                as? [String: String] else {
+            return [:]
+        }
+        return values
     }
 
     static let unavailable = NetworkConfiguration(

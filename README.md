@@ -43,12 +43,15 @@ Requirements:
 
 Open `SeeNA.xcodeproj`, select the `SeeNA` scheme and run on an iOS 26 simulator or physical iPhone. Numeric screening is enabled separately per exact hardware identifier only after that physical device completes calibration; every other compatible iPhone receives the full accessibility assessment without a fabricated eye-power value.
 
-Before a device/backend test, set these build settings to the deployed HTTPS backend and matching prototype token:
+Before a device/backend test, configure the deployed HTTPS backend and matching prototype token without adding either value to Git:
 
-```text
-SEENA_BACKEND_URL
-SEENA_APP_TOKEN
+```bash
+SEENA_BACKEND_URL=https://your-backend.vercel.app \
+SEENA_APP_TOKEN=your-64-character-token \
+./scripts/configure-local-secrets.sh
 ```
+
+Xcode loads the generated, ignored `Config/Secrets.xcconfig` for Debug and Release builds. The same command creates an ignored `SeeNA/Secrets.plist` resource so the values are available at runtime. A clean clone continues to use an intentionally invalid placeholder until this command is run.
 
 The OpenAI key must never be added to the Xcode project, app bundle or mobile source.
 

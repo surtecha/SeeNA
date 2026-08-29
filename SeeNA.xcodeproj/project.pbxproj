@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
+		D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = SeeNA.xcconfig; sourceTree = "<group>"; };
 		D8817E8F30429FAA0064FA5F /* SeeNA.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SeeNA.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -30,9 +31,18 @@
 		D8817E8630429FAA0064FA5F = {
 			isa = PBXGroup;
 			children = (
+				D8A1B2C43042A0000064FA5F /* Config */,
 				D8817E9130429FAA0064FA5F /* SeeNA */,
 				D8817E9030429FAA0064FA5F /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		D8A1B2C43042A0000064FA5F /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		D8817E9030429FAA0064FA5F /* Products */ = {
@@ -174,6 +184,8 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				SEENA_APP_TOKEN = "seena-v0-prototype";
+				SEENA_BACKEND_URL = "https://replace-after-preview-deploy.invalid";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -231,6 +243,8 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				SEENA_APP_TOKEN = "seena-v0-prototype";
+				SEENA_BACKEND_URL = "https://replace-after-preview-deploy.invalid";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -238,6 +252,7 @@
 		};
 		D8817E9B30429FAA0064FA5F /* Debug configuration for PBXNativeTarget "SeeNA" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -252,8 +267,8 @@
 				INFOPLIST_KEY_CFBundleDisplayName = SeeNA;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SeeNA uses the front camera to measure distance and gaze during screening. Camera frames stay on this iPhone.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SeeNA records short direction responses for transcription, then deletes the audio.";
-				INFOPLIST_KEY_SEENA_APP_TOKEN = "seena-v0-prototype";
-				INFOPLIST_KEY_SEENA_BACKEND_URL = "https://replace-after-preview-deploy.invalid";
+				INFOPLIST_KEY_SEENA_APP_TOKEN = "$(SEENA_APP_TOKEN)";
+				INFOPLIST_KEY_SEENA_BACKEND_URL = "$(SEENA_BACKEND_URL)";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -274,6 +289,7 @@
 		};
 		D8817E9C30429FAA0064FA5F /* Release configuration for PBXNativeTarget "SeeNA" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -288,8 +304,8 @@
 				INFOPLIST_KEY_CFBundleDisplayName = SeeNA;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SeeNA uses the front camera to measure distance and gaze during screening. Camera frames stay on this iPhone.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SeeNA records short direction responses for transcription, then deletes the audio.";
-				INFOPLIST_KEY_SEENA_APP_TOKEN = "seena-v0-prototype";
-				INFOPLIST_KEY_SEENA_BACKEND_URL = "https://replace-after-preview-deploy.invalid";
+				INFOPLIST_KEY_SEENA_APP_TOKEN = "$(SEENA_APP_TOKEN)";
+				INFOPLIST_KEY_SEENA_BACKEND_URL = "$(SEENA_BACKEND_URL)";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (

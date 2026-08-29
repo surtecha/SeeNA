@@ -1,6 +1,8 @@
 # Xcode
 DerivedData/
 build/
+Config/Secrets.xcconfig
+SeeNA/Secrets.plist
 *.xcuserstate
 xcuserdata/
 *.xccheckout

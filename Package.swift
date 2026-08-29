@@ -25,6 +25,7 @@ let package = Package(
                 "Networking",
                 "Persistence",
                 "Resources",
+                "Secrets.plist",
                 "SeeNAApp.swift",
                 "Sensors"
             ],

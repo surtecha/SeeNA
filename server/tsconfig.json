@@ -9,7 +9,6 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node", "vitest/globals"],
     "outDir": "dist"
   },
   "include": ["api/**/*.ts", "lib/**/*.ts", "tests/**/*.ts"]
