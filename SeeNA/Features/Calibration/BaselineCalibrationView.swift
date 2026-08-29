@@ -33,8 +33,8 @@ struct BaselineCalibrationView: View {
                     ready: model.sample?.phoneStable == true
                 )
                 CalibrationPill(
-                    title: model.headReady ? "GAZE CENTRED" : "LOOK AT CENTRE",
-                    symbol: "eye",
+                    title: model.headReady ? "FACE CENTRED" : "FACE THE PHONE",
+                    symbol: "person.crop.circle",
                     ready: model.headReady
                 )
             }

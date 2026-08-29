@@ -29,7 +29,6 @@ struct PhoneSetupView: View {
             HStack(spacing: 8) {
                 TrackingPill(title: "FACE", symbol: "person.crop.circle", ready: model.faceReady)
                 TrackingPill(title: "STILL", symbol: "iphone", ready: model.phoneReady)
-                TrackingPill(title: "GAZE", symbol: "eye", ready: model.gazeReady)
                 TrackingPill(title: "LIGHT", symbol: "sun.max", ready: model.lightReady)
             }
 
@@ -79,7 +78,7 @@ private struct TrackingStage: View {
                     .rotationEffect(.degrees(-90))
                     .animation(reduceMotion ? nil : .smooth(duration: 0.36), value: model.readinessProgress)
 
-                GazeIndicator(offset: model.gazeOffset, ready: model.gazeReady)
+                GazeIndicator(offset: model.gazeOffset, ready: model.faceReady)
             }
 
             Text(model.instruction.uppercased())

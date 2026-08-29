@@ -76,6 +76,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     private var fusion = DistanceFusionEngine()
     private var trackingFrames: [Bool] = []
     private var mockTask: Task<Void, Never>?
+    private var smoothedGaze: GazeAlignment?
 
     init(profileRegistry: DeviceProfileRegistry, useMockData: Bool = false) {
         self.profileRegistry = profileRegistry
@@ -125,6 +126,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         motion.stop()
         mockTask?.cancel()
         mockTask = nil
+        smoothedGaze = nil
         isRunning = false
     }
 
@@ -152,6 +154,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         let coverage = trackingFrames.isEmpty ? 0 : Double(trackingFrames.filter { $0 }.count) / Double(trackingFrames.count)
 
         guard let face = faces.first else {
+            smoothedGaze = nil
             latestSample = DistanceSample(
                 rawARDistanceMetres: nil,
                 relativeScaleDistanceMetres: nil,
@@ -176,7 +179,23 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         let left = SIMD3<Float>(leftTransform.columns.3.x, leftTransform.columns.3.y, leftTransform.columns.3.z)
         let right = SIMD3<Float>(rightTransform.columns.3.x, rightTransform.columns.3.y, rightTransform.columns.3.z)
         let centre = (left + right) / 2
-        let eyeInCamera = simd_mul(simd_inverse(frame.camera.transform), SIMD4<Float>(centre.x, centre.y, centre.z, 1))
+        let cameraInverse = simd_inverse(frame.camera.transform)
+        let eyeInCamera = simd_mul(cameraInverse, SIMD4<Float>(centre.x, centre.y, centre.z, 1))
+        let lookAtWorld = simd_mul(
+            face.transform,
+            SIMD4<Float>(face.lookAtPoint.x, face.lookAtPoint.y, face.lookAtPoint.z, 1)
+        )
+        let lookAtCamera = simd_mul(cameraInverse, lookAtWorld)
+        let gaze = smoothGaze(
+            GazeAlignmentEngine.errors(
+                eyeX: Double(eyeInCamera.x),
+                eyeY: Double(eyeInCamera.y),
+                eyeZ: Double(eyeInCamera.z),
+                lookX: Double(lookAtCamera.x),
+                lookY: Double(lookAtCamera.y),
+                lookZ: Double(lookAtCamera.z)
+            )
+        )
         let rawDistance = Double(abs(eyeInCamera.z))
         guard let screen = ScreenContext.active else { return }
         let viewport = screen.bounds.size
@@ -204,6 +223,8 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
             accelerationRMS: motion.snapshot.accelerationRMS,
             headYawDegrees: angles.yaw,
             headPitchDegrees: angles.pitch,
+            gazeYawErrorDegrees: gaze?.yawErrorDegrees,
+            gazePitchErrorDegrees: gaze?.pitchErrorDegrees,
             luminance: Self.averageLuminance(frame.capturedImage),
             faceCount: faces.count,
             interEyePixels: interEyePixels
@@ -247,6 +268,8 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
                     accelerationRMS: 0.004,
                     headYawDegrees: 0.5,
                     headPitchDegrees: 0.4,
+                    gazeYawErrorDegrees: 0,
+                    gazePitchErrorDegrees: 0,
                     luminance: 0.55,
                     faceCount: 1,
                     interEyePixels: 210
@@ -255,6 +278,26 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
         }
+    }
+
+    private func smoothGaze(_ current: GazeAlignment?) -> GazeAlignment? {
+        guard let current else {
+            smoothedGaze = nil
+            return nil
+        }
+        guard let previous = smoothedGaze else {
+            smoothedGaze = current
+            return current
+        }
+        let newSampleWeight = 0.22
+        let smoothed = GazeAlignment(
+            yawErrorDegrees: previous.yawErrorDegrees * (1 - newSampleWeight)
+                + current.yawErrorDegrees * newSampleWeight,
+            pitchErrorDegrees: previous.pitchErrorDegrees * (1 - newSampleWeight)
+                + current.pitchErrorDegrees * newSampleWeight
+        )
+        smoothedGaze = smoothed
+        return smoothed
     }
 
     private static func eulerAnglesDegrees(_ matrix: simd_float4x4) -> (yaw: Double, pitch: Double) {

@@ -76,8 +76,8 @@ final class EyeTestViewModel: ObservableObject {
         let withinDistance = current.map { abs($0 - targetDistance) <= tolerance } ?? false
         let validPose = sample.faceCount == 1
             && sample.phoneStable
-            && abs(sample.headYawDegrees) <= 10
-            && abs(sample.headPitchDegrees) <= 10
+            && abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            && abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
             && sample.luminance >= 0.12
 
         if withinDistance && validPose {

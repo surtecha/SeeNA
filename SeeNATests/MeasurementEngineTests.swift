@@ -2,6 +2,47 @@ import XCTest
 @testable import SEENACore
 
 final class MeasurementEngineTests: XCTestCase {
+    func testGazeAlignmentAtCameraHasNoAngularError() throws {
+        let alignment = try XCTUnwrap(
+            GazeAlignmentEngine.errors(
+                eyeX: 0.03,
+                eyeY: -0.02,
+                eyeZ: -0.50,
+                lookX: 0,
+                lookY: 0,
+                lookZ: 0
+            )
+        )
+
+        XCTAssertEqual(alignment.yawErrorDegrees, 0, accuracy: 0.000_001)
+        XCTAssertEqual(alignment.pitchErrorDegrees, 0, accuracy: 0.000_001)
+    }
+
+    func testGazeAlignmentReportsOffCentreAndRejectsOppositeRay() throws {
+        let offCentre = try XCTUnwrap(
+            GazeAlignmentEngine.errors(
+                eyeX: 0,
+                eyeY: 0,
+                eyeZ: -0.50,
+                lookX: 0.20,
+                lookY: 0,
+                lookZ: 0
+            )
+        )
+
+        XCTAssertGreaterThan(offCentre.yawErrorDegrees, 15)
+        XCTAssertNil(
+            GazeAlignmentEngine.errors(
+                eyeX: 0,
+                eyeY: 0,
+                eyeZ: -0.50,
+                lookX: 0,
+                lookY: 0,
+                lookZ: -1
+            )
+        )
+    }
+
     func testDiopterConversionUsesMeasuredDistance() throws {
         XCTAssertEqual(try XCTUnwrap(RefractionEstimator.diopter(forDistanceMetres: 2.0)), -0.5, accuracy: 0.000_001)
         XCTAssertEqual(try XCTUnwrap(RefractionEstimator.diopter(forDistanceMetres: 1.0)), -1.0, accuracy: 0.000_001)

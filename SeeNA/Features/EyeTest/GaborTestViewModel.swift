@@ -55,8 +55,8 @@ final class GaborTestViewModel: ObservableObject {
         let ready = distance.map { (0.37...0.43).contains($0) } == true
             && sample.faceCount == 1
             && sample.phoneStable
-            && abs(sample.headYawDegrees) <= 10
-            && abs(sample.headPitchDegrees) <= 10
+            && abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            && abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
             && sample.luminance >= 0.12
 
         if ready {

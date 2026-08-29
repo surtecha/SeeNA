@@ -97,18 +97,14 @@ final class PhoneSetupViewModel {
 
     var faceReady: Bool { sample?.faceCount == 1 }
     var phoneReady: Bool { sample?.phoneStable == true }
-    var gazeReady: Bool {
-        guard let sample else { return false }
-        return abs(sample.headYawDegrees) <= 10 && abs(sample.headPitchDegrees) <= 10
-    }
     var lightReady: Bool { (sample?.luminance ?? 0) >= 0.12 }
 
     var isReady: Bool {
-        faceReady && phoneReady && gazeReady && lightReady
+        faceReady && phoneReady && lightReady
     }
 
     var readinessProgress: Double {
-        let checks = [faceReady, phoneReady, gazeReady, lightReady]
+        let checks = [faceReady, phoneReady, lightReady]
         return Double(checks.filter { $0 }.count) / Double(checks.count)
     }
 
@@ -120,7 +116,6 @@ final class PhoneSetupViewModel {
         guard sample != nil else { return "Finding you" }
         if !faceReady { return "One face in frame" }
         if !phoneReady { return "Let the phone settle" }
-        if !gazeReady { return "Look at the centre" }
         if !lightReady { return "Add more light" }
         return isLocked ? "Position locked" : "Ready to lock"
     }
@@ -132,8 +127,8 @@ final class PhoneSetupViewModel {
     var gazeOffset: CGSize {
         guard let sample else { return .zero }
         return CGSize(
-            width: min(18, max(-18, sample.headYawDegrees * 1.25)),
-            height: min(12, max(-12, sample.headPitchDegrees * 0.9))
+            width: min(18, max(-18, (sample.gazeYawErrorDegrees ?? 0) * 1.1)),
+            height: min(12, max(-12, (sample.gazePitchErrorDegrees ?? 0) * 0.8))
         )
     }
 
@@ -236,8 +231,8 @@ final class CalibrationViewModel {
     var headReady: Bool {
         guard let sample else { return false }
         return sample.faceCount == 1
-            && abs(sample.headYawDegrees) <= 10
-            && abs(sample.headPitchDegrees) <= 10
+            && abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+            && abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
     }
 
     var trackingReady: Bool {
@@ -256,7 +251,7 @@ final class CalibrationViewModel {
 
     var instruction: String {
         guard let measuredDistance else { return "Step into view" }
-        if !headReady { return "Look at the centre" }
+        if !headReady { return "Face the phone" }
         if sample?.phoneStable != true { return "Keep the phone still" }
         if measuredDistance < 0.37 {
             return "Move back \(Int(((0.40 - measuredDistance) * 100).rounded())) cm"

@@ -158,8 +158,8 @@ struct QualityThresholds: Codable, Equatable, Sendable {
         minimumTrackingCoverage: 0.90,
         maximumAttitudeDriftDegrees: 1.5,
         maximumAccelerationRMS: 0.02,
-        maximumHeadYawDegrees: 10,
-        maximumHeadPitchDegrees: 10,
+        maximumHeadYawDegrees: 18,
+        maximumHeadPitchDegrees: 18,
         maximumDistanceSDNearMetres: 0.02,
         maximumDistanceSDFarMetres: 0.05
     )
@@ -216,6 +216,8 @@ struct DistanceSample: Codable, Equatable, Identifiable, Sendable {
     let accelerationRMS: Double
     let headYawDegrees: Double
     let headPitchDegrees: Double
+    let gazeYawErrorDegrees: Double?
+    let gazePitchErrorDegrees: Double?
     let luminance: Double
     let faceCount: Int
     let interEyePixels: Double?
@@ -234,6 +236,8 @@ struct DistanceSample: Codable, Equatable, Identifiable, Sendable {
         accelerationRMS: Double,
         headYawDegrees: Double,
         headPitchDegrees: Double,
+        gazeYawErrorDegrees: Double? = nil,
+        gazePitchErrorDegrees: Double? = nil,
         luminance: Double,
         faceCount: Int,
         interEyePixels: Double?
@@ -251,6 +255,8 @@ struct DistanceSample: Codable, Equatable, Identifiable, Sendable {
         self.accelerationRMS = accelerationRMS
         self.headYawDegrees = headYawDegrees
         self.headPitchDegrees = headPitchDegrees
+        self.gazeYawErrorDegrees = gazeYawErrorDegrees
+        self.gazePitchErrorDegrees = gazePitchErrorDegrees
         self.luminance = luminance
         self.faceCount = faceCount
         self.interEyePixels = interEyePixels

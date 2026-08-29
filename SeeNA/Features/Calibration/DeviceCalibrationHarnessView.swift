@@ -70,8 +70,8 @@ struct DeviceCalibrationHarnessView: View {
                sample.timestamp != lastTimestamp,
                sample.faceCount == 1,
                sample.phoneStable,
-               abs(sample.headYawDegrees) <= 10,
-               abs(sample.headPitchDegrees) <= 10,
+               abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees,
+               abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees,
                sample.luminance >= 0.12,
                let raw = sample.fusedDistanceMetres {
                 captured.append(.init(groundTruthMetres: groundTruth, rawDistanceMetres: raw))
