@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = SeeNA.xcconfig; sourceTree = "<group>"; };
 		D8817E8F30429FAA0064FA5F /* SeeNA.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SeeNA.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = SeeNA.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -22,8 +22,10 @@
 /* Begin PBXFrameworksBuildPhase section */
 		D8817E8C30429FAA0064FA5F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -37,20 +39,20 @@
 			);
 			sourceTree = "<group>";
 		};
-		D8A1B2C43042A0000064FA5F /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */,
-			);
-			path = Config;
-			sourceTree = "<group>";
-		};
 		D8817E9030429FAA0064FA5F /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				D8817E8F30429FAA0064FA5F /* SeeNA.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		D8A1B2C43042A0000064FA5F /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -65,6 +67,8 @@
 				D8817E8D30429FAA0064FA5F /* Resources */,
 			);
 			buildRules = (
+			);
+			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
 				D8817E9130429FAA0064FA5F /* SeeNA */,
@@ -111,21 +115,25 @@
 /* Begin PBXResourcesBuildPhase section */
 		D8817E8D30429FAA0064FA5F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		D8817E8B30429FAA0064FA5F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		D8817E9830429FAA0064FA5F /* Debug configuration for PBXProject "SeeNA" */ = {
+		D8817E9830429FAA0064FA5F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -191,7 +199,7 @@
 			};
 			name = Debug;
 		};
-		D8817E9930429FAA0064FA5F /* Release configuration for PBXProject "SeeNA" */ = {
+		D8817E9930429FAA0064FA5F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -250,7 +258,7 @@
 			};
 			name = Release;
 		};
-		D8817E9B30429FAA0064FA5F /* Debug configuration for PBXNativeTarget "SeeNA" */ = {
+		D8817E9B30429FAA0064FA5F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */;
 			buildSettings = {
@@ -258,17 +266,17 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 22C2CK4886;
+				DEVELOPMENT_TEAM = T5X7DM2VN8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = SeeNA;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SeeNA uses the front camera to measure distance and gaze during screening. Camera frames stay on this iPhone.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SeeNA records short direction responses for transcription, then deletes the audio.";
 				INFOPLIST_KEY_SEENA_APP_TOKEN = "$(SEENA_APP_TOKEN)";
 				INFOPLIST_KEY_SEENA_BACKEND_URL = "$(SEENA_BACKEND_URL)";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -276,7 +284,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.surtecha.SeeNA;
+				PRODUCT_BUNDLE_IDENTIFIER = com.karthikramesh9149.seena;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -287,7 +295,7 @@
 			};
 			name = Debug;
 		};
-		D8817E9C30429FAA0064FA5F /* Release configuration for PBXNativeTarget "SeeNA" */ = {
+		D8817E9C30429FAA0064FA5F /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = D8A1B2C33042A0000064FA5F /* SeeNA.xcconfig */;
 			buildSettings = {
@@ -295,17 +303,17 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 22C2CK4886;
+				DEVELOPMENT_TEAM = T5X7DM2VN8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = SeeNA;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SeeNA uses the front camera to measure distance and gaze during screening. Camera frames stay on this iPhone.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SeeNA records short direction responses for transcription, then deletes the audio.";
 				INFOPLIST_KEY_SEENA_APP_TOKEN = "$(SEENA_APP_TOKEN)";
 				INFOPLIST_KEY_SEENA_BACKEND_URL = "$(SEENA_BACKEND_URL)";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -313,7 +321,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.surtecha.SeeNA;
+				PRODUCT_BUNDLE_IDENTIFIER = com.karthikramesh9149.seena;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -330,21 +338,22 @@
 		D8817E8A30429FAA0064FA5F /* Build configuration list for PBXProject "SeeNA" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				D8817E9830429FAA0064FA5F /* Debug configuration for PBXProject "SeeNA" */,
-				D8817E9930429FAA0064FA5F /* Release configuration for PBXProject "SeeNA" */,
+				D8817E9830429FAA0064FA5F /* Debug */,
+				D8817E9930429FAA0064FA5F /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		D8817E9A30429FAA0064FA5F /* Build configuration list for PBXNativeTarget "SeeNA" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				D8817E9B30429FAA0064FA5F /* Debug configuration for PBXNativeTarget "SeeNA" */,
-				D8817E9C30429FAA0064FA5F /* Release configuration for PBXNativeTarget "SeeNA" */,
+				D8817E9B30429FAA0064FA5F /* Debug */,
+				D8817E9C30429FAA0064FA5F /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
 	rootObject = D8817E8730429FAA0064FA5F /* Project object */;
-	validationLevel = 1;
 }
