@@ -10,8 +10,8 @@ struct PermissionsView: View {
 
     var body: some View {
         ActionScaffold(
-            title: "Camera. Voice. Nothing else.",
-            subtitle: "Camera stays on-device. Audio is deleted after transcription.",
+            title: "Camera and voice",
+            subtitle: "Tap Allow twice. Then SeeNA can guide the screening without more tapping.",
             primaryTitle: model.primaryTitle,
             primarySystemImage: model.primarySystemImage,
             primaryEnabled: !model.isRequesting,
@@ -19,37 +19,37 @@ struct PermissionsView: View {
                 Task { await model.primaryAction(session: session) }
             }
         ) {
-            PermissionStage(
-                cameraGranted: model.cameraGranted,
-                microphoneGranted: model.microphoneGranted,
-                isRequesting: model.isRequesting
-            )
-
             VStack(spacing: 10) {
                 PermissionRow(
                     symbol: "camera.fill",
                     title: "Camera",
-                    detail: model.cameraGranted ? "Ready" : "Distance + gaze",
+                    detail: model.cameraGranted ? "Ready" : "Tap Allow",
                     granted: model.cameraGranted
                 )
                 PermissionRow(
                     symbol: "waveform",
                     title: "Voice",
-                    detail: model.microphoneGranted ? "Ready" : "Seven directions",
+                    detail: model.microphoneGranted ? "Ready" : "Tap Allow",
                     granted: model.microphoneGranted
                 )
             }
             .animation(.snappy(duration: 0.34), value: model.cameraGranted)
             .animation(.snappy(duration: 0.34), value: model.microphoneGranted)
 
-            if model.requestCompleted && !model.cameraGranted {
-                Label("Visual estimate unavailable. Readability mode remains available.", systemImage: "eye.slash")
+            Label("Natural AI-generated female guide", systemImage: "speaker.wave.2.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(SEENATheme.secondaryInk)
+                .padding(.horizontal, 4)
+
+            if model.requestCompleted && (!model.cameraGranted || !model.microphoneGranted) {
+                Label("Both permissions are needed. Tap Try again, or enable them in Settings.", systemImage: "exclamationmark.circle")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(SEENATheme.secondaryInk)
                     .padding(.horizontal, 4)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .task { await model.begin(session: session) }
         .navigationTitle("Permissions")
         .navigationBarTitleDisplayMode(.inline)
     }

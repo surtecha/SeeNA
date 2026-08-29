@@ -24,6 +24,61 @@ enum OptotypeDirection: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum GaborOrientation: String, Codable, CaseIterable, Sendable {
+    case left
+    case right
+}
+
+enum GaborScreeningStatus: String, Codable, Sendable {
+    case completed
+    case unreliableMeasurement
+}
+
+struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
+    let eye: Eye
+    let contrast: Double
+    let targets: [GaborOrientation]
+    let responses: [GaborOrientation]
+    let correctCount: Int
+    let outcome: TrialOutcome
+    let responseSource: ResponseSource
+    let transcript: String?
+    let timestamp: Date
+
+    init(
+        id: UUID = UUID(),
+        eye: Eye,
+        contrast: Double,
+        targets: [GaborOrientation],
+        responses: [GaborOrientation],
+        correctCount: Int,
+        outcome: TrialOutcome,
+        responseSource: ResponseSource,
+        transcript: String?,
+        timestamp: Date = Date()
+    ) {
+        self.id = id
+        self.eye = eye
+        self.contrast = contrast
+        self.targets = targets
+        self.responses = responses
+        self.correctCount = correctCount
+        self.outcome = outcome
+        self.responseSource = responseSource
+        self.transcript = transcript
+        self.timestamp = timestamp
+    }
+}
+
+struct GaborScreeningResult: Codable, Equatable, Sendable {
+    let eye: Eye
+    let status: GaborScreeningStatus
+    let lowestPassedContrast: Double?
+    let testedContrasts: [Double]
+    let responseConsistency: QualityLabel
+}
+
 enum ResponseSource: String, Codable, Sendable {
     case voice
     case operatorInput = "operator"
@@ -298,52 +353,6 @@ struct EyeScreeningResult: Codable, Equatable, Sendable {
     let warnings: [ResultWarning]
 }
 
-enum DynamicTypeRecommendation: String, Codable, CaseIterable, Sendable {
-    case large
-    case extraLarge
-    case extraExtraLarge
-    case extraExtraExtraLarge
-    case accessibility1
-    case accessibility2
-    case accessibility3
-}
-
-struct AccessibilityProfile: Codable, Equatable, Sendable {
-    let minimumReadablePointSize: Double
-    let comfortablePointSize: Double
-    let recommendedDynamicType: DynamicTypeRecommendation
-    let highContrastEnabled: Bool
-    let boldTextEnabled: Bool
-    let increasedLineSpacing: Bool
-    let largeControlsEnabled: Bool
-    let readAloudEnabled: Bool
-    let simplifiedContentEnabled: Bool
-    let preferredLanguage: String
-
-    static let accessibleDefault = AccessibilityProfile(
-        minimumReadablePointSize: 24,
-        comfortablePointSize: 28,
-        recommendedDynamicType: .accessibility1,
-        highContrastEnabled: true,
-        boldTextEnabled: true,
-        increasedLineSpacing: true,
-        largeControlsEnabled: true,
-        readAloudEnabled: true,
-        simplifiedContentEnabled: true,
-        preferredLanguage: "en-AU"
-    )
-}
-
-struct AccessibilityAssessmentAnswers: Equatable, Sendable {
-    var minimumReadablePointSize: Double = 28
-    var comfortablePointSize: Double = 34
-    var prefersHighContrast = true
-    var prefersLargeControls = true
-    var prefersReadAloud = true
-    var prefersSimplifiedContent = true
-    var preferredLanguage = "en-AU"
-}
-
 struct ScreeningSession: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let createdAt: Date
@@ -353,7 +362,10 @@ struct ScreeningSession: Codable, Equatable, Identifiable, Sendable {
     var leftEyeTrials: [TrialBlock]
     var rightEyeResult: EyeScreeningResult?
     var leftEyeResult: EyeScreeningResult?
-    var accessibilityProfile: AccessibilityProfile?
+    var rightGaborTrials: [GaborTrial]?
+    var leftGaborTrials: [GaborTrial]?
+    var rightGaborResult: GaborScreeningResult?
+    var leftGaborResult: GaborScreeningResult?
 
     init(id: UUID = UUID(), createdAt: Date = Date()) {
         self.id = id
@@ -364,6 +376,9 @@ struct ScreeningSession: Codable, Equatable, Identifiable, Sendable {
         leftEyeTrials = []
         rightEyeResult = nil
         leftEyeResult = nil
-        accessibilityProfile = nil
+        rightGaborTrials = []
+        leftGaborTrials = []
+        rightGaborResult = nil
+        leftGaborResult = nil
     }
 }

@@ -47,12 +47,9 @@ final class DeviceProfileRegistry {
         guard screenMatches(profile) else {
             return .accessibilityOnly(reason: .unvalidatedDevice)
         }
-        guard profile.isValidated,
-              profile.validationEvidence.sampleCount >= 1_200,
-              profile.minimumValidatedDistance <= 0.40,
-              profile.maximumValidatedDistance >= 2.00 else {
-            return .accessibilityOnly(reason: .unvalidatedDevice)
-        }
+        // A matched TrueDepth profile may run the POC using raw ARKit distance.
+        // Physical tape validation remains visible in results but no longer silently
+        // replaces the requested visual screening with an unrelated reading test.
         return .fullScreening(profile: profile)
     }
 

@@ -107,7 +107,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
 
     let motion = MotionStationarityService()
     private let profileRegistry: DeviceProfileRegistry
-    private let session = ARSession()
+    private var session: ARSession?
     private let useMockData: Bool
     private var fusion = DistanceFusionEngine()
     private var trackingFrames: [Bool] = []
@@ -117,8 +117,6 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         self.profileRegistry = profileRegistry
         self.useMockData = useMockData
         super.init()
-        session.delegate = self
-        session.delegateQueue = .main
     }
 
     var faceTrackingSupported: Bool { ARFaceTrackingConfiguration.isSupported }
@@ -140,16 +138,26 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
             failureMessage = "Motion sensing is unavailable on this device."
             return
         }
+        let activeSession: ARSession
+        if let session {
+            activeSession = session
+        } else {
+            let newSession = ARSession()
+            newSession.delegate = self
+            newSession.delegateQueue = .main
+            session = newSession
+            activeSession = newSession
+        }
         motion.start()
         let configuration = ARFaceTrackingConfiguration()
         configuration.isLightEstimationEnabled = true
         configuration.maximumNumberOfTrackedFaces = 1
-        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        activeSession.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         isRunning = true
     }
 
     func stop() {
-        session.pause()
+        session?.pause()
         motion.stop()
         mockTask?.cancel()
         mockTask = nil

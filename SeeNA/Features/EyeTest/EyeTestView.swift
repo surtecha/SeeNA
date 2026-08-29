@@ -16,7 +16,7 @@ struct EyeTestView: View {
             Spacer(minLength: 12)
             testContent
             Spacer(minLength: 12)
-            evidenceStrip
+            VoiceStatusPill(isListening: model.phase == .recording)
         }
         .padding(20)
         .background(Color.white.ignoresSafeArea())
@@ -59,7 +59,7 @@ struct EyeTestView: View {
                 .font(.caption.weight(.bold))
                 .foregroundColor(SEENATheme.teal)
             Text(model.phase.title)
-                .font(.system(.title, design: .rounded, weight: .bold))
+                .font(.system(.title2, design: .rounded, weight: .bold))
                 .multilineTextAlignment(.center)
             if let stage = model.stage {
                 Text(stageLabel(stage))
@@ -113,33 +113,22 @@ struct EyeTestView: View {
                     .font(.system(size: 34, weight: .black, design: .rounded))
                     .multilineTextAlignment(.center)
                 Text(currentDistanceText)
-                    .font(.system(size: 52, weight: .bold, design: .monospaced))
+                    .font(.system(size: 38, weight: .bold, design: .monospaced))
                     .foregroundColor(isAtDistance ? SEENATheme.teal : SEENATheme.ink)
                 Text(String(format: "Target %.2f m", model.targetDistance))
-                    .font(.title2.weight(.semibold))
+                    .font(.headline.weight(.semibold))
                     .foregroundColor(SEENATheme.secondaryInk)
                 if model.phase == .stabilising {
                     ProgressView(value: model.readyProgress)
                         .tint(SEENATheme.teal)
                         .scaleEffect(x: 1, y: 2)
                 }
-                Text("The row starts automatically after you hold still for 0.8 seconds.")
-                    .font(.headline)
+                Text("The test starts automatically when you are in place.")
+                    .font(.body.weight(.medium))
                     .multilineTextAlignment(.center)
                     .foregroundColor(SEENATheme.secondaryInk)
             }
         }
-    }
-
-    private var evidenceStrip: some View {
-        HStack(spacing: 12) {
-            EvidenceValue(label: "Tracking", value: sample.map { String(format: "%.0f%%", $0.trackingCoverage * 100) } ?? "—")
-            EvidenceValue(label: "Distance SD", value: sample?.distanceStandardDeviation.map { String(format: "%.3f m", $0) } ?? "—")
-            EvidenceValue(label: "Phone", value: sample?.phoneStable == true ? "Still" : "Moving")
-        }
-        .padding(12)
-        .background(SEENATheme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var sample: DistanceSample? { session.sensorState }

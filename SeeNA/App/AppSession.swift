@@ -2,7 +2,6 @@ import Foundation
 import Combine
 
 enum AppRoute: Hashable {
-    case howItWorks
     case eligibility
     case safetyStop
     case permissions
@@ -11,17 +10,13 @@ enum AppRoute: Hashable {
     case calibration
     case rightEyeInstructions
     case rightEyeTest
+    case rightGaborTest
     case leftEyeInstructions
     case leftEyeTest
-    case accessibilityIntroduction
-    case accessibilitySetup
-    case accessibilityTest
+    case leftGaborTest
     case processing
     case results
     case evidence
-    case accessibleDemo
-    case history
-    case deletionConfirmation
 }
 
 enum AppError: LocalizedError, Equatable {
@@ -42,41 +37,15 @@ enum AppError: LocalizedError, Equatable {
     }
 }
 
-struct EligibilityAnswers: Equatable {
-    var wearingDistanceGlasses = false
-    var wearingContactLenses = false
-    var suddenVisionChange = false
-    var severePainOrRecentInjury = false
-    var canMoveSafely = true
-    var isAdult = true
-
-    var outcome: EligibilityOutcome {
-        if suddenVisionChange || severePainOrRecentInjury { return .safetyStop }
-        if wearingContactLenses || !canMoveSafely || !isAdult { return .accessibilityOnly }
-        return .fullScreening
-    }
-}
-
-enum EligibilityOutcome: Equatable {
-    case fullScreening
-    case accessibilityOnly
-    case safetyStop
-}
-
 @MainActor
 final class AppSession: ObservableObject {
     @Published var path: [AppRoute] = []
     @Published var activeSession = ScreeningSession()
     @Published var sensorState: DistanceSample?
-    @Published var accessibilityProfile: AccessibilityProfile?
-    @Published var accessibilityAnswers = AccessibilityAssessmentAnswers()
     @Published var cachedExplanation: ExplanationResponse?
-    @Published var cachedAdaptedContent: AdaptedContentResponse?
     @Published var capabilityTier: DeviceCapabilityTier?
-    @Published var eligibilityAnswers = EligibilityAnswers()
     @Published var appError: AppError?
-    @Published var isAccessibilityOnly = false
-    @Published var isRestoringHistory = false
+    @Published private(set) var didTapStart = false
 
     init() {
 #if DEBUG
@@ -84,6 +53,7 @@ final class AppSession: ObservableObject {
         if let keyIndex = arguments.firstIndex(of: "-SEENA_DEBUG_ROUTE"),
            arguments.indices.contains(keyIndex + 1),
            let route = Self.debugRoute(named: arguments[keyIndex + 1]) {
+            didTapStart = true
             path = [route]
         }
 #endif
@@ -91,6 +61,12 @@ final class AppSession: ObservableObject {
 
     func navigate(to route: AppRoute) {
         path.append(route)
+    }
+
+    func beginJourney() {
+        guard !didTapStart, path.isEmpty else { return }
+        didTapStart = true
+        navigate(to: .permissions)
     }
 
     func replaceFlow(with route: AppRoute) {
@@ -105,30 +81,15 @@ final class AppSession: ObservableObject {
         activeSession = ScreeningSession()
         sensorState = nil
         appError = nil
-        isAccessibilityOnly = false
-        accessibilityAnswers = AccessibilityAssessmentAnswers()
-        accessibilityProfile = nil
+        didTapStart = false
         cachedExplanation = nil
-        cachedAdaptedContent = nil
         path = []
-    }
-
-    func applyEligibility() {
-        switch eligibilityAnswers.outcome {
-        case .safetyStop:
-            navigate(to: .safetyStop)
-        case .accessibilityOnly:
-            isAccessibilityOnly = true
-            navigate(to: .permissions)
-        case .fullScreening:
-            navigate(to: .permissions)
-        }
     }
 
     var requiresLiveSensors: Bool {
         guard let route = path.last else { return false }
         switch route {
-        case .phoneSetup, .calibration, .rightEyeTest, .leftEyeTest, .accessibilitySetup:
+        case .phoneSetup, .calibration, .rightEyeTest, .rightGaborTest, .leftEyeTest, .leftGaborTest:
             return true
         default:
             return false
@@ -138,7 +99,7 @@ final class AppSession: ObservableObject {
     var requiresScreeningBrightness: Bool {
         guard let route = path.last else { return false }
         switch route {
-        case .calibration, .rightEyeTest, .leftEyeTest:
+        case .calibration, .rightEyeTest, .rightGaborTest, .leftEyeTest, .leftGaborTest:
             return true
         default:
             return false

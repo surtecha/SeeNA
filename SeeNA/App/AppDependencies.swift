@@ -34,6 +34,7 @@ final class AppDependencies: ObservableObject {
 
     static func live() -> AppDependencies {
         let registry = DeviceProfileRegistry()
+        let backend = BackendClient(configuration: .bundle)
 #if DEBUG
         let useMockSensors = ProcessInfo.processInfo.arguments.contains("-SEENA_USE_MOCK_SENSORS")
 #else
@@ -44,8 +45,8 @@ final class AppDependencies: ObservableObject {
             sessionStore: SessionStore(),
             sensorCoordinator: SensorCoordinator(profileRegistry: registry, useMockData: useMockSensors),
             audioRecorder: AudioBlockRecorder(),
-            spokenPrompts: SpokenPromptService(),
-            backend: BackendClient(configuration: .bundle),
+            spokenPrompts: SpokenPromptService(backend: backend),
+            backend: backend,
             network: NetworkReachabilityService(),
             brightness: BrightnessManager()
         )
@@ -53,13 +54,14 @@ final class AppDependencies: ObservableObject {
 
     static func preview() -> AppDependencies {
         let registry = DeviceProfileRegistry(profiles: [])
+        let backend = BackendClient(configuration: .unavailable)
         return AppDependencies(
             profileRegistry: registry,
             sessionStore: SessionStore(inMemory: true),
             sensorCoordinator: SensorCoordinator(profileRegistry: registry, useMockData: true),
             audioRecorder: AudioBlockRecorder(),
-            spokenPrompts: SpokenPromptService(),
-            backend: BackendClient(configuration: .unavailable),
+            spokenPrompts: SpokenPromptService(backend: backend),
+            backend: backend,
             network: NetworkReachabilityService(),
             brightness: BrightnessManager(isEnabled: false)
         )

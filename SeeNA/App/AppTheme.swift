@@ -215,7 +215,7 @@ struct PageHeader: View {
     let eyebrow: String
     let title: String
     let subtitle: String?
-    @ScaledMetric(relativeTo: .largeTitle) private var titleSize = 42.0
+    @ScaledMetric(relativeTo: .title) private var titleSize = 34.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

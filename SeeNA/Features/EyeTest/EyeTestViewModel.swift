@@ -41,6 +41,7 @@ final class EyeTestViewModel: ObservableObject {
     private var engine: ThresholdSearchEngine
     private var readySince: Date?
     private var mostRecentSample: DistanceSample?
+    private var hasExplainedResizing = false
 
     init(eye: Eye) {
         self.eye = eye
@@ -100,7 +101,7 @@ final class EyeTestViewModel: ObservableObject {
         isRunningBlock = true
         if targets.count != 7 { targets = Self.randomDirections() }
         phase = .presenting
-        await dependencies.spokenPrompts.speakAndWait("Hold still. Read the seven openings from left to right.")
+        await dependencies.spokenPrompts.speakAndWait("Seven rings. Say each opening, left to right.")
 
         do {
             phase = .recording
@@ -227,15 +228,21 @@ final class EyeTestViewModel: ObservableObject {
             else { session.activeSession.leftEyeResult = result }
             phase = .completed
             await dependencies.spokenPrompts.speakAndWait("\(eye.displayName) eye complete.")
-            session.navigate(to: eye == .right ? .leftEyeInstructions : .accessibilityIntroduction)
+            session.navigate(to: eye == .right ? .rightGaborTest : .leftGaborTest)
         }
     }
 
     private func announceGuidance(using dependencies: AppDependencies) {
         let distance = targetDistance
-        dependencies.spokenPrompts.speak(
-            String(format: "Move slowly to %.2f metres. Stop when you hear hold still.", distance)
-        )
+        let movement = String(format: "Move to %.2f metres.", distance)
+        if hasExplainedResizing {
+            dependencies.spokenPrompts.speak(movement)
+        } else {
+            hasExplainedResizing = true
+            dependencies.spokenPrompts.speak(
+                "The rings resize as you move. \(movement)"
+            )
+        }
     }
 
     private func qualityMessage(_ quality: BlockQuality) -> String {

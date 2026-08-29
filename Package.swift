@@ -20,6 +20,7 @@ let package = Package(
                 "Assets.xcassets",
                 "Audio",
                 "ContentView.swift",
+                "Engines/GaborRenderer.swift",
                 "Engines/LandoltCRenderer.swift",
                 "Features",
                 "Networking",
@@ -32,6 +33,7 @@ let package = Package(
             sources: [
                 "Models/DomainModels.swift",
                 "Engines/MeasurementEngines.swift",
+                "Engines/GaborContrastEngine.swift",
                 "Engines/ThresholdSearchEngine.swift"
             ]
         ),

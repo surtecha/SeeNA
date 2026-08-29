@@ -4,48 +4,6 @@ import UIKit
 
 @MainActor
 @Observable
-final class WelcomeViewModel {
-    private(set) var distanceMetres = 0.72
-    private(set) var pulse = false
-    private var lastHapticStep = -1
-
-    var progress: Double {
-        min(1, max(0, (distanceMetres - 0.40) / 1.60))
-    }
-
-    var distanceLabel: String {
-        distanceMetres < 1
-            ? "\(Int((distanceMetres * 100).rounded())) cm"
-            : String(format: "%.2f m", distanceMetres)
-    }
-
-    var targetDiameter: Double {
-        42 + progress * 72
-    }
-
-    func setDistance(progress: Double) {
-        let bounded = min(1, max(0, progress))
-        distanceMetres = 0.40 + bounded * 1.60
-        let hapticStep = Int((bounded * 8).rounded(.down))
-        if hapticStep != lastHapticStep {
-            lastHapticStep = hapticStep
-            HapticFeedback.selection()
-        }
-    }
-
-    func startMotion(reduceMotion: Bool) {
-        guard !reduceMotion else { return }
-        pulse = true
-    }
-
-    func begin(session: AppSession) {
-        HapticFeedback.impact(.medium)
-        session.navigate(to: .eligibility)
-    }
-}
-
-@MainActor
-@Observable
 final class PermissionsViewModel {
     private(set) var cameraGranted: Bool
     private(set) var microphoneGranted: Bool
@@ -53,9 +11,11 @@ final class PermissionsViewModel {
     private(set) var isRequesting = false
 
     private let audioRecorder: AudioBlockRecorder
+    private let prompts: SpokenPromptService
 
-    init(audioRecorder: AudioBlockRecorder) {
+    init(audioRecorder: AudioBlockRecorder, prompts: SpokenPromptService) {
         self.audioRecorder = audioRecorder
+        self.prompts = prompts
         let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
         let microphoneStatus = AVAudioApplication.shared.recordPermission
         cameraGranted = cameraStatus == .authorized
@@ -65,7 +25,8 @@ final class PermissionsViewModel {
 
     var primaryTitle: String {
         if isRequesting { return "Requesting access" }
-        return requestCompleted ? "Continue" : "Allow camera & voice"
+        if requestCompleted && cameraGranted && microphoneGranted { return "Continue" }
+        return requestCompleted ? "Try again" : "Allow camera & voice"
     }
 
     var primarySystemImage: String {
@@ -73,19 +34,28 @@ final class PermissionsViewModel {
     }
 
     func primaryAction(session: AppSession) async {
-        if requestCompleted {
-            if !cameraGranted {
-                session.isAccessibilityOnly = true
-            }
+        guard session.didTapStart else { return }
+        if requestCompleted && cameraGranted && microphoneGranted {
             HapticFeedback.impact()
-            session.navigate(to: .deviceCheck)
+            session.navigate(to: .eligibility)
             return
         }
         await requestPermissions(session: session)
     }
 
+    func begin(session: AppSession) async {
+        guard session.didTapStart else { return }
+        if cameraGranted && microphoneGranted {
+            session.navigate(to: .eligibility)
+            return
+        }
+        guard !requestCompleted else { return }
+        prompts.speak("Tap Allow for camera, then microphone.")
+        await requestPermissions(session: session)
+    }
+
     private func requestPermissions(session: AppSession) async {
-        guard !isRequesting else { return }
+        guard session.didTapStart, !isRequesting else { return }
         isRequesting = true
         defer { isRequesting = false }
 
@@ -98,14 +68,12 @@ final class PermissionsViewModel {
         microphoneGranted = await audioRecorder.requestPermission()
         requestCompleted = true
 
-        if !cameraGranted {
-            session.isAccessibilityOnly = true
-        }
-
         if cameraGranted && microphoneGranted {
             HapticFeedback.success()
+            session.navigate(to: .eligibility)
         } else {
             HapticFeedback.warning()
+            prompts.speak("Camera and microphone are both needed for this screening. You can try again.")
         }
     }
 }
@@ -116,6 +84,8 @@ final class PhoneSetupViewModel {
     private(set) var sample: DistanceSample?
     private(set) var isLocked = false
     private var announcedReady = false
+    private var readySince: Date?
+    private var isAdvancing = false
 
     private let sensors: SensorCoordinator
     private let prompts: SpokenPromptService
@@ -169,15 +139,33 @@ final class PhoneSetupViewModel {
 
     func start() {
         sensors.start()
+        prompts.speak("Set the phone upright at eye level. Step into view, then let go.")
     }
 
-    func observe(_ sample: DistanceSample?) {
+    func observe(_ sample: DistanceSample?, session: AppSession) {
         self.sample = sample
         if isReady && !announcedReady {
             announcedReady = true
             HapticFeedback.success()
         } else if !isReady {
             announcedReady = false
+        }
+
+        if isReady, !isLocked, !isAdvancing {
+            readySince = readySince ?? Date()
+            if Date().timeIntervalSince(readySince ?? Date()) >= 1 {
+                isAdvancing = true
+                sensors.lockPhoneReference()
+                isLocked = true
+                HapticFeedback.impact(.rigid)
+                Task {
+                    await prompts.speakAndWait("Phone locked. Move close.")
+                    guard session.path.last == .phoneSetup else { return }
+                    session.navigate(to: .calibration)
+                }
+            }
+        } else if !isReady {
+            readySince = nil
         }
     }
 
@@ -195,7 +183,11 @@ final class PhoneSetupViewModel {
         sensors.lockPhoneReference()
         isLocked = true
         HapticFeedback.impact(.rigid)
-        prompts.speak("Phone position locked. Move to forty centimetres.")
+        Task {
+            await prompts.speakAndWait("Phone locked. Move close.")
+            guard session.path.last == .phoneSetup else { return }
+            session.navigate(to: .calibration)
+        }
     }
 
     func replayGuide() {
@@ -220,6 +212,8 @@ final class CalibrationViewModel {
     private(set) var sample: DistanceSample?
     private(set) var didCapture = false
     private var announcedReady = false
+    private var readySince: Date?
+    private var isAdvancing = false
 
     private let sensors: SensorCoordinator
     private let prompts: SpokenPromptService
@@ -280,16 +274,27 @@ final class CalibrationViewModel {
     func start() {
         brightness.applyScreeningBrightness()
         sensors.start()
-        prompts.speak("Move slowly until the ring closes at forty centimetres.")
+        prompts.speak("Move to forty centimetres.")
     }
 
-    func observe(_ sample: DistanceSample?) {
+    func observe(_ sample: DistanceSample?, session: AppSession) {
         self.sample = sample
         if isReady && !announcedReady {
             announcedReady = true
             HapticFeedback.success()
         } else if !isReady {
             announcedReady = false
+        }
+
+
+        if isReady, !didCapture, !isAdvancing {
+            readySince = readySince ?? Date()
+            if Date().timeIntervalSince(readySince ?? Date()) >= 0.8 {
+                isAdvancing = true
+                capture(session: session, shouldAdvance: true)
+            }
+        } else if !isReady {
+            readySince = nil
         }
     }
 
@@ -299,7 +304,7 @@ final class CalibrationViewModel {
             session.navigate(to: .rightEyeInstructions)
             return
         }
-        capture(session: session)
+        capture(session: session, shouldAdvance: false)
     }
 
     func replayGuide() {
@@ -307,7 +312,7 @@ final class CalibrationViewModel {
         prompts.speak("Move to forty centimetres, look at the centre, and keep the phone completely still.")
     }
 
-    private func capture(session: AppSession) {
+    private func capture(session: AppSession, shouldAdvance: Bool) {
         guard isReady, sensors.captureBaseline() else {
             HapticFeedback.warning()
             session.appError = .invalidState
@@ -316,6 +321,10 @@ final class CalibrationViewModel {
         session.activeSession.baselineDistanceMetres = measuredDistance
         didCapture = true
         HapticFeedback.success()
-        prompts.speak("Baseline saved. Cover your left eye next.")
+        Task {
+            await prompts.speakAndWait("Distance saved. Cover your left eye.")
+            guard shouldAdvance, session.path.last == .calibration else { return }
+            session.navigate(to: .rightEyeInstructions)
+        }
     }
 }

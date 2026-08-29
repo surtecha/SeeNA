@@ -20,7 +20,6 @@ struct SeeNAApp: App {
                 .environmentObject(dependencies)
                 .task {
                     dependencies.brightness.restoreIfNeeded()
-                    await restoreHistory()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     handleScenePhase(phase)
@@ -34,24 +33,17 @@ struct SeeNAApp: App {
         case .active:
             if session.requiresLiveSensors { dependencies.sensorCoordinator.start() }
             if session.requiresScreeningBrightness { dependencies.brightness.applyScreeningBrightness() }
-        case .inactive, .background:
+        case .inactive:
+            dependencies.audioRecorder.stop()
+            dependencies.sensorCoordinator.stop()
+            dependencies.brightness.restore()
+        case .background:
             dependencies.audioRecorder.stop()
             dependencies.spokenPrompts.stop()
             dependencies.sensorCoordinator.stop()
             dependencies.brightness.restore()
         @unknown default:
             dependencies.brightness.restore()
-        }
-    }
-
-    @MainActor
-    private func restoreHistory() async {
-        session.isRestoringHistory = true
-        defer { session.isRestoringHistory = false }
-        do {
-            _ = try await dependencies.sessionStore.loadSessions()
-        } catch {
-            session.appError = .persistenceFailed
         }
     }
 }

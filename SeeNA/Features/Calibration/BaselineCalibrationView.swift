@@ -12,8 +12,8 @@ struct BaselineCalibrationView: View {
 
     var body: some View {
         ActionScaffold(
-            title: "Find 40 cm.",
-            subtitle: "Move until the ring closes.",
+            title: "Move close",
+            subtitle: "SeeNA will stop you automatically at 40 centimetres.",
             primaryTitle: model.primaryTitle,
             primarySystemImage: model.primarySystemImage,
             primaryEnabled: model.primaryEnabled,
@@ -45,7 +45,7 @@ struct BaselineCalibrationView: View {
         }
         .onAppear { model.start() }
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
-            model.observe(sample)
+            model.observe(sample, session: session)
         }
         .navigationTitle("Calibration")
         .navigationBarTitleDisplayMode(.inline)

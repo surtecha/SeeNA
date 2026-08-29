@@ -37,6 +37,8 @@ struct EvidenceView: View {
 
             trials(title: "Right eye", values: session.activeSession.rightEyeTrials)
             trials(title: "Left eye", values: session.activeSession.leftEyeTrials)
+            gaborTrials(title: "Right eye Gabor", values: session.activeSession.rightGaborTrials ?? [])
+            gaborTrials(title: "Left eye Gabor", values: session.activeSession.leftGaborTrials ?? [])
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Calculation").font(.title2.bold())
@@ -50,6 +52,26 @@ struct EvidenceView: View {
         }
         .navigationTitle("Evidence")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func gaborTrials(title: String, values: [GaborTrial]) -> some View {
+        if !values.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(title).font(.title2.bold())
+                ForEach(Array(values.enumerated()), id: \.element.id) { index, trial in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Block \(index + 1) — \(trial.outcome.rawValue.capitalized)").font(.headline)
+                        evidenceRow("Contrast", "\(Int((trial.contrast * 100).rounded()))%")
+                        evidenceRow("Targets", trial.targets.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: " "))
+                        evidenceRow("Responses", trial.responses.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: " "))
+                        evidenceRow("Score", "\(trial.correctCount)/7")
+                    }
+                    if index < values.count - 1 { Divider() }
+                }
+            }
+            .evidenceCard()
+        }
     }
 
     @ViewBuilder

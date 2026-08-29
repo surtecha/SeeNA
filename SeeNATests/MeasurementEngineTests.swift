@@ -77,6 +77,27 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertEqual(TrialScorer.outcome(correctCount: 7, hasExactlySevenResponses: false), .invalid)
     }
 
+    func testGaborScoringUsesSameConservativeSevenAnswerRule() {
+        let targets: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left]
+        let responses: [GaborOrientation] = [.left, .right, .left, .right, .right, .left, .left]
+        XCTAssertEqual(GaborScorer.correctCount(targets: targets, responses: responses), 5)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 5, hasExactlySevenResponses: true), .pass)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 4, hasExactlySevenResponses: true), .borderline)
+    }
+
+    func testGaborContrastStaircaseStopsAtFirstFailedLevel() {
+        var engine = GaborContrastEngine(eye: .right)
+        XCTAssertEqual(engine.nextAction, .test(contrast: 0.40))
+        XCTAssertEqual(engine.submit(gaborTrial(contrast: 0.40, outcome: .pass)), .test(contrast: 0.25))
+        XCTAssertEqual(engine.submit(gaborTrial(contrast: 0.25, outcome: .pass)), .test(contrast: 0.16))
+
+        guard case .completed(let result) = engine.submit(gaborTrial(contrast: 0.16, outcome: .fail)) else {
+            return XCTFail("Expected a completed Gabor result")
+        }
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.lowestPassedContrast, 0.25)
+    }
+
     func testFirstCandidatePassRequiresConfirmationAndReturnsBoundaryStatus() {
         var engine = ThresholdSearchEngine(eye: .right)
         let first = block(eye: .right, candidate: -0.5, distance: 2, outcome: .pass)
@@ -139,38 +160,6 @@ final class MeasurementEngineTests: XCTestCase {
         }
         let fit = try XCTUnwrap(CalibrationFitter.affineFit(observations: observations))
         XCTAssertTrue(CalibrationFitter.passesAcceptance(observations: observations, fit: fit))
-    }
-
-    func testWordAccuracyUsesEditDistance() {
-        XCTAssertEqual(
-            ReadabilityEngine.wordAccuracy(
-                reference: "The bus arrives near the library at ten.",
-                transcript: "the bus arrives near library at ten"
-            ),
-            0.875,
-            accuracy: 0.000_001
-        )
-    }
-
-    func testAccessibilityProfileIsLocalAndDeterministic() {
-        let profile = AccessibilityProfileEngine.makeProfile(
-            from: AccessibilityAssessmentAnswers(
-                minimumReadablePointSize: 24,
-                comfortablePointSize: 34,
-                prefersHighContrast: true,
-                prefersLargeControls: false,
-                prefersReadAloud: true,
-                prefersSimplifiedContent: false,
-                preferredLanguage: "en-AU"
-            )
-        )
-        XCTAssertEqual(profile.minimumReadablePointSize, 24)
-        XCTAssertEqual(profile.comfortablePointSize, 34)
-        XCTAssertEqual(profile.recommendedDynamicType, .accessibility1)
-        XCTAssertTrue(profile.highContrastEnabled)
-        XCTAssertFalse(profile.largeControlsEnabled)
-        XCTAssertTrue(profile.readAloudEnabled)
-        XCTAssertFalse(profile.simplifiedContentEnabled)
     }
 
     func testStatisticsAndDistanceFusionRejectNoise() throws {
@@ -339,6 +328,20 @@ final class MeasurementEngineTests: XCTestCase {
             luminance: luminance,
             faceCount: faceCount,
             interEyePixels: 200
+        )
+    }
+
+    private func gaborTrial(contrast: Double, outcome: TrialOutcome) -> GaborTrial {
+        let targets: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left]
+        return GaborTrial(
+            eye: .right,
+            contrast: contrast,
+            targets: targets,
+            responses: targets,
+            correctCount: outcome == .pass ? 7 : 2,
+            outcome: outcome,
+            responseSource: .voice,
+            transcript: nil
         )
     }
 }

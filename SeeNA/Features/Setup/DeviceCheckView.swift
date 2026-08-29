@@ -5,14 +5,15 @@ struct DeviceCheckView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @State private var tier: DeviceCapabilityTier?
+    @State private var didAutoContinue = false
 #if DEBUG
     @State private var showingCalibrationHarness = false
 #endif
 
     var body: some View {
         ScreenScaffold(
-            title: "Device compatibility",
-            subtitle: "Numeric screening is enabled only for an exact iPhone model with completed physical calibration."
+            title: "This iPhone is ready",
+            subtitle: "SeeNA will use the front camera and motion sensors for this POC screening."
         ) {
             StatusRow(
                 title: "Hardware identifier",
@@ -55,11 +56,10 @@ struct DeviceCheckView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             Button(continueTitle) {
-                if case .fullScreening = tier, !session.isAccessibilityOnly {
+                if case .fullScreening = tier {
                     session.navigate(to: .phoneSetup)
                 } else {
-                    session.isAccessibilityOnly = true
-                    session.navigate(to: .accessibilityIntroduction)
+                    session.appError = .sensorUnavailable("A supported TrueDepth iPhone")
                 }
             }
             .buttonStyle(PrimaryActionStyle())
@@ -77,6 +77,17 @@ struct DeviceCheckView: View {
             session.capabilityTier = assessment
             if case .fullScreening(let profile) = assessment {
                 session.activeSession.deviceProfile = profile
+                guard !didAutoContinue else { return }
+                didAutoContinue = true
+                await dependencies.spokenPrompts.speakAndWait(
+                    profile.isValidated
+                        ? "Phone ready. Set it upright at eye level."
+                        : "POC mode ready. Set the phone upright at eye level."
+                )
+                guard session.path.last == .deviceCheck else { return }
+                session.navigate(to: .phoneSetup)
+            } else {
+                dependencies.spokenPrompts.speak("This iPhone cannot run the camera screening.")
             }
         }
         .navigationTitle("Compatibility")
@@ -90,25 +101,28 @@ struct DeviceCheckView: View {
 
     private var calibrationDetail: String {
         guard let profile = dependencies.profileRegistry.profile() else { return "No profile for this exact hardware" }
-        return profile.isValidated ? "Validated profile v\(profile.profileVersion)" : "Candidate profile — physical calibration required"
+        return profile.isValidated ? "Physically validated" : "POC sensor profile"
     }
 
     private var calibrationState: StatusRow.State {
-        dependencies.profileRegistry.profile()?.isValidated == true ? .ready : .warning
+        dependencies.profileRegistry.profile() == nil ? .warning : .ready
     }
 
     private var outcomeText: String {
         switch tier {
-        case .fullScreening: return "This exact device is ready for numeric screening and accessibility setup."
-        case .accessibilityOnly: return "Accessibility setup is available. Numeric screening remains disabled until this exact device passes calibration."
+        case .fullScreening(let profile):
+            return profile.isValidated
+                ? "Ready for Landolt C and Gabor screening."
+                : "Ready for POC Landolt C and Gabor screening. Exact tape-measure validation is not yet complete."
+        case .accessibilityOnly: return "This iPhone cannot run the visual screening."
         case .unsupported: return "This device cannot safely run the SeeNA assessment."
         case nil: return "Checking device capabilities…"
         }
     }
 
     private var continueTitle: String {
-        if case .fullScreening = tier, !session.isAccessibilityOnly { return "Continue to phone setup" }
-        return "Continue to accessibility setup"
+        if case .fullScreening = tier { return "Continue" }
+        return "Screening unavailable"
     }
 
     private func refreshTier() {

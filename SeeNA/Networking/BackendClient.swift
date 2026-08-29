@@ -129,6 +129,13 @@ actor BackendClient {
         try await postJSON(path: "/api/adapt-content", value: requestValue, response: AdaptedContentResponse.self)
     }
 
+    func speech(text: String, locale: String = "en-AU") async throws -> Data {
+        var request = try makeRequest(path: "/api/speak", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(SpeechRequest(text: text, locale: locale))
+        return try await sendWithSingleRetry(request)
+    }
+
     private func postJSON<Input: Encodable, Output: Decodable>(path: String, value: Input, response: Output.Type) async throws -> Output {
         var request = try makeRequest(path: path, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -187,6 +194,11 @@ actor BackendClient {
             }
         }
     }
+}
+
+private struct SpeechRequest: Encodable {
+    let text: String
+    let locale: String
 }
 
 private extension Data {

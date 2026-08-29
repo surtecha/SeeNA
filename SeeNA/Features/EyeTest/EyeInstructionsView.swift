@@ -1,43 +1,80 @@
+import Observation
 import SwiftUI
+
+@MainActor
+@Observable
+private final class EyeReadyViewModel {
+    enum Phase { case speaking, listening, waiting }
+    private(set) var phase: Phase = .speaking
+    private var hasStarted = false
+
+    func begin(eye: Eye, session: AppSession, dependencies: AppDependencies) async {
+        guard !hasStarted else { return }
+        hasStarted = true
+        await listenForReady(eye: eye, session: session, dependencies: dependencies)
+    }
+
+    func continueNow(eye: Eye, session: AppSession) {
+        session.navigate(to: eye == .right ? .rightEyeTest : .leftEyeTest)
+    }
+
+    private func listenForReady(eye: Eye, session: AppSession, dependencies: AppDependencies) async {
+        phase = .speaking
+        await dependencies.spokenPrompts.speakAndWait(
+            "Cover your \(eye.eyeToCover) eye without pressing. Say yes when ready."
+        )
+        do {
+            phase = .listening
+            let recording = try await dependencies.audioRecorder.record(maximumDuration: 8)
+            defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
+            let response = try await dependencies.backend.transcribe(
+                audioURL: recording.fileURL,
+                mode: .constrainedChoice,
+                choiceSetID: "readAloud"
+            )
+            if response.valid, response.choice == "yes" {
+                HapticFeedback.success()
+                continueNow(eye: eye, session: session)
+            } else {
+                phase = .waiting
+                await dependencies.spokenPrompts.speakAndWait("Take your time. Say yes when you are ready.")
+                hasStarted = false
+                await begin(eye: eye, session: session, dependencies: dependencies)
+            }
+        } catch {
+            phase = .waiting
+            dependencies.spokenPrompts.speak("I couldn’t hear you. Say yes again, or use the ready button.")
+        }
+    }
+}
 
 struct EyeInstructionsView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
+    @State private var model = EyeReadyViewModel()
     let eye: Eye
 
     var body: some View {
-        ScreenScaffold(
-            title: "Test your \(eye.displayName.lowercased()) eye",
-            subtitle: "Cover your \(eye.eyeToCover) eye gently without pressing on it. Keep your \(eye.displayName.lowercased()) eye open and face the centre of the phone."
-        ) {
+        VStack(spacing: 24) {
+            Spacer()
             Image(systemName: eye == .right ? "eye.circle.fill" : "eye.circle")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 180, height: 180)
-                .foregroundColor(SEENATheme.teal)
-                .frame(maxWidth: .infinity)
+                .font(.system(size: 92, weight: .light))
                 .accessibilityHidden(true)
-
-            StatusRow(
-                title: "Do not press on the covered eye",
-                detail: "Use your palm or an opaque card. Keep the tested eye looking at the screen.",
-                state: .ready
-            )
-            StatusRow(
-                title: "Move only between rows",
-                detail: "Move slowly, stop at the spoken distance, then hold completely still.",
-                state: .ready
-            )
-
-            Button("I am ready") {
-                session.navigate(to: eye == .right ? .rightEyeTest : .leftEyeTest)
-            }
-            .buttonStyle(PrimaryActionStyle())
+            Text("\(eye.displayName) eye")
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+            Text("Cover your \(eye.eyeToCover) eye")
+                .font(.title3.weight(.semibold))
+            VoiceStatusPill(isListening: model.phase == .listening)
+            Text("Say “yes” when ready")
+                .font(.body)
+                .foregroundStyle(SEENATheme.secondaryInk)
+            Spacer()
+            Button("I’m ready") { model.continueNow(eye: eye, session: session) }
+                .buttonStyle(PrimaryActionStyle())
         }
-        .onAppear {
-            dependencies.spokenPrompts.speak("Cover your \(eye.eyeToCover) eye without pressing it. Keep your \(eye.displayName.lowercased()) eye open. Select I am ready.")
-        }
-        .navigationTitle("\(eye.displayName) eye")
-        .navigationBarTitleDisplayMode(.inline)
+        .padding(24)
+        .background(Color.white.ignoresSafeArea())
+        .navigationBarBackButtonHidden()
+        .task { await model.begin(eye: eye, session: session, dependencies: dependencies) }
     }
 }

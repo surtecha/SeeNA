@@ -12,8 +12,8 @@ struct PhoneSetupView: View {
 
     var body: some View {
         ActionScaffold(
-            title: "Make the phone disappear.",
-            subtitle: "Set it at eye level. Then stop touching it.",
+            title: "Set down the phone",
+            subtitle: "Keep it upright at eye level. SeeNA continues automatically when it is ready.",
             primaryTitle: model.primaryTitle,
             primarySystemImage: model.primarySystemImage,
             primaryEnabled: model.primaryEnabled,
@@ -39,7 +39,7 @@ struct PhoneSetupView: View {
         }
         .onAppear { model.start() }
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
-            model.observe(sample)
+            model.observe(sample, session: session)
         }
         .onDisappear {
             model.stopIfLeavingSetup(nextRoute: session.path.last)

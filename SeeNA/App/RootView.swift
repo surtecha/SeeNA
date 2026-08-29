@@ -3,7 +3,6 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
-    @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
 
     var body: some View {
         NavigationStack(path: $session.path) {
@@ -14,7 +13,6 @@ struct RootView: View {
         }
         .tint(SEENATheme.ink)
         .preferredColorScheme(.light)
-        .environment(\.dynamicTypeSize, session.accessibilityProfile?.swiftUIDynamicTypeSize ?? systemDynamicTypeSize)
         .alert(
             "SeeNA could not continue",
             isPresented: Binding(
@@ -24,9 +22,6 @@ struct RootView: View {
             actions: { Button("OK", role: .cancel) { session.appError = nil } },
             message: { Text(session.appError?.localizedDescription ?? "Please try again.") }
         )
-        .onChange(of: session.accessibilityProfile) { _, profile in
-            session.activeSession.accessibilityProfile = profile
-        }
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
             session.sensorState = sample
         }
@@ -35,12 +30,14 @@ struct RootView: View {
     @ViewBuilder
     private func destination(for route: AppRoute) -> some View {
         switch route {
-        case .howItWorks: HowItWorksView()
         case .eligibility: EligibilityView()
         case .safetyStop: SafetyStopView()
         case .permissions:
             PermissionsView(
-                model: PermissionsViewModel(audioRecorder: dependencies.audioRecorder)
+                model: PermissionsViewModel(
+                    audioRecorder: dependencies.audioRecorder,
+                    prompts: dependencies.spokenPrompts
+                )
             )
         case .deviceCheck: DeviceCheckView()
         case .phoneSetup:
@@ -60,31 +57,13 @@ struct RootView: View {
             )
         case .rightEyeInstructions: EyeInstructionsView(eye: .right)
         case .rightEyeTest: EyeTestView(eye: .right)
+        case .rightGaborTest: GaborTestView(eye: .right)
         case .leftEyeInstructions: EyeInstructionsView(eye: .left)
         case .leftEyeTest: EyeTestView(eye: .left)
-        case .accessibilityIntroduction: AccessibilityIntroductionView()
-        case .accessibilitySetup: AccessibilitySetupView()
-        case .accessibilityTest: AccessibilityAssessmentView()
+        case .leftGaborTest: GaborTestView(eye: .left)
         case .processing: ProcessingView()
         case .results: ResultsView()
         case .evidence: EvidenceView()
-        case .accessibleDemo: AccessibleDemoView()
-        case .history: HistoryView()
-        case .deletionConfirmation: DeletionView()
-        }
-    }
-}
-
-private extension AccessibilityProfile {
-    var swiftUIDynamicTypeSize: DynamicTypeSize {
-        switch recommendedDynamicType {
-        case .large: return .large
-        case .extraLarge: return .xLarge
-        case .extraExtraLarge: return .xxLarge
-        case .extraExtraExtraLarge: return .xxxLarge
-        case .accessibility1: return .accessibility1
-        case .accessibility2: return .accessibility2
-        case .accessibility3: return .accessibility3
         }
     }
 }
