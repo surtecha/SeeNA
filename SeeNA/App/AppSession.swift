@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 
 enum AppRoute: Hashable {
     case eligibility
@@ -17,6 +18,59 @@ enum AppRoute: Hashable {
     case processing
     case results
     case evidence
+    case history
+}
+
+enum SessionPersistenceState: Equatable {
+    case unknown
+    case saved
+    case volatile
+}
+
+enum ScreeningResponseMode: Equatable {
+    case voicePreferred
+    case operatorOnly
+}
+
+enum SafetyStopReason: String, CaseIterable, Identifiable {
+    case suddenVisionChange
+    case severeEyePain
+    case seriousEyeInjury
+    case contactLenses
+    case under18
+    case unsafeMovement
+    case other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .suddenVisionChange: return "Sudden vision change or loss"
+        case .severeEyePain: return "Severe eye pain"
+        case .seriousEyeInjury: return "Serious injury, chemical, or object in the eye"
+        case .contactLenses: return "Contact lenses are still in"
+        case .under18: return "Participant is under 18"
+        case .unsafeMovement: return "Cannot move safely for the task"
+        case .other: return "Another safety exclusion applies"
+        }
+    }
+
+    var urgentGuidance: String {
+        switch self {
+        case .suddenVisionChange:
+            return "Stop. Sudden vision change or loss needs immediate medical help. Go to the nearest emergency department. Call 000 if it is an emergency. You can also call Healthdirect on 1800 022 222."
+        case .severeEyePain, .seriousEyeInjury:
+            return "Stop. Seek a doctor as soon as possible or go to the nearest emergency department. Call 000 only if it is an emergency. You can also call Healthdirect on 1800 022 222."
+        case .contactLenses:
+            return "Stop this screening. Remove contact lenses and arrange an appropriate eye examination before considering another screening."
+        case .under18:
+            return "Stop this screening. SeeNA is for adults aged 18 or older."
+        case .unsafeMovement:
+            return "Stop this screening. Do not move farther from the phone if you cannot do so safely."
+        case .other:
+            return "Stop this screening. Arrange appropriate professional care before trying again."
+        }
+    }
 }
 
 enum AppError: LocalizedError, Equatable {
@@ -46,10 +100,19 @@ final class AppSession: ObservableObject {
     @Published var capabilityTier: DeviceCapabilityTier?
     @Published var appError: AppError?
     @Published private(set) var didTapStart = false
+    @Published var persistenceState: SessionPersistenceState = .unknown
+    @Published var responseMode: ScreeningResponseMode = .voicePreferred
+    @Published var safetyStopReason: SafetyStopReason?
 
     init() {
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-SEENA_USE_MOCK_SENSORS"),
+           arguments.contains(SimulatorVoiceAutomation.launchArgument) {
+            didTapStart = true
+            path = [.deviceCheck]
+            return
+        }
         if let keyIndex = arguments.firstIndex(of: "-SEENA_DEBUG_ROUTE"),
            arguments.indices.contains(keyIndex + 1),
            let route = Self.debugRoute(named: arguments[keyIndex + 1]) {
@@ -61,20 +124,48 @@ final class AppSession: ObservableObject {
 
     func navigate(to route: AppRoute) {
         path.append(route)
+        announce(route)
     }
 
     func beginJourney() {
         guard !didTapStart, path.isEmpty else { return }
         didTapStart = true
-        navigate(to: .permissions)
+        navigate(to: .eligibility)
     }
 
     func replaceFlow(with route: AppRoute) {
         path = [route]
+        announce(route)
     }
 
     func goBack() {
         if !path.isEmpty { path.removeLast() }
+        if let route = path.last { announce(route) }
+    }
+
+    private func announce(_ route: AppRoute) {
+        let label: String
+        switch route {
+        case .eligibility: label = "Safety check"
+        case .safetyStop: label = "Screening stopped"
+        case .permissions: label = "Camera and microphone access"
+        case .deviceCheck: label = "Device check"
+        case .phoneSetup: label = "Phone setup"
+        case .calibration: label = "Distance setup"
+        case .rightEyeInstructions: label = "Right eye instructions"
+        case .rightEyeTest: label = "Right eye Landolt task"
+        case .rightGaborTest: label = "Right eye Gabor pattern task"
+        case .leftEyeInstructions: label = "Left eye instructions"
+        case .leftEyeTest: label = "Left eye Landolt task"
+        case .leftGaborTest: label = "Left eye Gabor pattern task"
+        case .processing: label = "Saving screening"
+        case .results: label = "Screening results"
+        case .evidence: label = "Answer audit"
+        case .history: label = "Previous sessions"
+        }
+        DispatchQueue.main.async {
+            UIAccessibility.post(notification: .screenChanged, argument: label)
+        }
     }
 
     func startNewSession() {
@@ -83,7 +174,22 @@ final class AppSession: ObservableObject {
         appError = nil
         didTapStart = false
         cachedExplanation = nil
+        persistenceState = .unknown
+        responseMode = .voicePreferred
+        safetyStopReason = nil
         path = []
+    }
+
+    func abandonJourney() {
+        activeSession = ScreeningSession()
+        sensorState = nil
+        cachedExplanation = nil
+        capabilityTier = nil
+        appError = nil
+        persistenceState = .unknown
+        responseMode = .voicePreferred
+        safetyStopReason = nil
+        didTapStart = false
     }
 
     var requiresLiveSensors: Bool {

@@ -9,9 +9,13 @@ actor SessionStore {
     private let inMemory: Bool
     private var memorySessions: [ScreeningSession] = []
     private let fileURL: URL?
+    private let writeData: @Sendable (Data, URL) throws -> Void
 
     init(inMemory: Bool = false) {
         self.inMemory = inMemory
+        writeData = { data, url in
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
+        }
         if inMemory {
             fileURL = nil
         } else {
@@ -28,11 +32,32 @@ actor SessionStore {
         }
     }
 
+    init(
+        fileURL: URL,
+        writeData: @escaping @Sendable (Data, URL) throws -> Void = { data, url in
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
+        }
+    ) {
+        inMemory = false
+        self.fileURL = fileURL
+        self.writeData = writeData
+    }
+
     func loadSessions() throws -> [ScreeningSession] {
         if inMemory { return memorySessions.sorted { $0.createdAt > $1.createdAt } }
         guard let fileURL, FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
-        let data = try Data(contentsOf: fileURL)
-        let envelope = try JSONDecoder().decode(SessionEnvelope.self, from: data)
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            throw StoreError.readFailed
+        }
+        let envelope: SessionEnvelope
+        do {
+            envelope = try JSONDecoder().decode(SessionEnvelope.self, from: data)
+        } catch {
+            throw StoreError.corruptHistory
+        }
         guard envelope.schemaVersion == 1 else { throw StoreError.unsupportedSchema }
         return envelope.sessions.sorted { $0.createdAt > $1.createdAt }
     }
@@ -57,7 +82,11 @@ actor SessionStore {
         }
         guard let fileURL else { return }
         if FileManager.default.fileExists(atPath: fileURL.path) {
-            try FileManager.default.removeItem(at: fileURL)
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+            } catch {
+                throw StoreError.deleteFailed
+            }
         }
     }
 
@@ -66,16 +95,34 @@ actor SessionStore {
             memorySessions = sessions
             return
         }
-        guard let fileURL else { throw StoreError.unavailable }
+        guard let fileURL else { throw StoreError.storageUnavailable }
         let envelope = SessionEnvelope(schemaVersion: 1, sessions: sessions)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(envelope)
-        try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        let data: Data
+        do {
+            data = try encoder.encode(envelope)
+        } catch {
+            throw StoreError.writeFailed
+        }
+        do {
+            try writeData(data, fileURL)
+        } catch {
+            throw StoreError.writeFailed
+        }
     }
 
-    enum StoreError: Error {
-        case unavailable
+    nonisolated static func allowsDestructiveRecovery(after error: Error) -> Bool {
+        guard let storeError = error as? StoreError else { return false }
+        return storeError == .corruptHistory || storeError == .unsupportedSchema
+    }
+
+    enum StoreError: Error, Equatable {
+        case storageUnavailable
         case unsupportedSchema
+        case corruptHistory
+        case readFailed
+        case writeFailed
+        case deleteFailed
     }
 }

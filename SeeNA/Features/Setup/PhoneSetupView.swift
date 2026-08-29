@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct PhoneSetupView: View {
@@ -30,6 +31,7 @@ struct PhoneSetupView: View {
                 TrackingPill(title: "FACE", symbol: "person.crop.circle", ready: model.faceReady)
                 TrackingPill(title: "STILL", symbol: "iphone", ready: model.phoneReady)
                 TrackingPill(title: "LIGHT", symbol: "sun.max", ready: model.lightReady)
+                TrackingPill(title: "GAZE", symbol: "eye", ready: model.gazeReady)
             }
 
             ProgressLine(title: model.instruction, value: model.readinessProgress)
@@ -39,6 +41,9 @@ struct PhoneSetupView: View {
         .onAppear { model.start() }
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
             model.observe(sample, session: session)
+        }
+        .onReceive(dependencies.sensorCoordinator.$streamEpoch.dropFirst()) { _ in
+            model.sensorStreamInvalidated()
         }
         .onDisappear {
             model.stopIfLeavingSetup(nextRoute: session.path.last)
@@ -133,7 +138,7 @@ private struct TrackingPill: View {
                 .font(.caption.weight(.bold))
                 .contentTransition(.symbolEffect(.replace))
             Text(title)
-                .font(.system(size: 9, weight: .bold))
+                .font(.caption2.weight(.bold))
                 .tracking(0.5)
         }
         .foregroundStyle(ready ? Color.white : SEENATheme.secondaryInk)

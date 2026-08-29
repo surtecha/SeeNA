@@ -25,7 +25,6 @@ let package = Package(
                 "Engines/LandoltCRenderer.swift",
                 "Features",
                 "Networking",
-                "Persistence",
                 "Resources",
                 "Secrets.plist",
                 "SeeNAApp.swift",
@@ -40,9 +39,11 @@ let package = Package(
                 "Engines/GaborContrastEngine.swift",
                 "Engines/MotionStationarityEvaluator.swift",
                 "Engines/ResultIntegrityValidator.swift",
+                "Engines/ResultsPresentationPolicy.swift",
                 "Engines/SequentialGaborSession.swift",
                 "Engines/SequentialOptotypeSession.swift",
-                "Engines/ThresholdSearchEngine.swift"
+                "Engines/ThresholdSearchEngine.swift",
+                "Persistence/SessionStore.swift"
             ]
         ),
         .testTarget(

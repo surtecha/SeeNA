@@ -35,12 +35,13 @@ struct SeeNAApp: App {
             if session.requiresScreeningBrightness { dependencies.brightness.applyScreeningBrightness() }
         case .inactive:
             dependencies.audioRecorder.stop()
-            dependencies.sensorCoordinator.stop()
+            dependencies.spokenPrompts.stop()
+            dependencies.sensorCoordinator.suspend()
             dependencies.brightness.restore()
         case .background:
             dependencies.audioRecorder.stop()
             dependencies.spokenPrompts.stop()
-            dependencies.sensorCoordinator.stop()
+            dependencies.sensorCoordinator.suspend()
             dependencies.brightness.restore()
         @unknown default:
             dependencies.brightness.restore()

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct EyeTestView: View {
@@ -5,18 +6,10 @@ struct EyeTestView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @StateObject private var model: EyeTestViewModel
-    @State private var operatorResponses: [OptotypeDirection] = []
+    @State private var operatorResponses: [OptotypeResponse] = []
 
     private var geometry: OptotypeGeometry? {
-        guard let profile = session.activeSession.deviceProfile else { return nil }
-        return OptotypeGeometry.calculate(
-            distanceMetres: model.presentationDistance,
-            pixelsPerInch: profile.pixelsPerInch,
-            displayScale: profile.displayScale,
-            // Only the standard angular target is scored. The large locator
-            // rendered by the stage view is deliberately non-directional.
-            presentationMode: .clinicalFiveArcMinute
-        )
+        model.presentedGeometry?.geometry
     }
 
     private var retryMessage: String? {
@@ -54,6 +47,12 @@ struct EyeTestView: View {
                 retryAction: repeatVoiceResponse,
                 operatorAction: showOperatorInput
             )
+            if model.operatorEntryEnabled {
+                Button("Use operator response mode", action: showOperatorInput)
+                    .buttonStyle(SecondaryActionStyle())
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Stops voice recording and opens seven large response controls")
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
@@ -62,6 +61,12 @@ struct EyeTestView: View {
         .navigationBarBackButtonHidden(model.isRunningBlock)
         .onAppear(perform: beginTest)
         .onReceive(dependencies.sensorCoordinator.$latestSample, perform: observe)
+        .onReceive(dependencies.sensorCoordinator.$streamEpoch.dropFirst()) { _ in
+            model.sensorStreamInvalidated(using: dependencies)
+        }
+        .onDisappear {
+            model.cancel(using: dependencies)
+        }
         .overlay(alignment: .topLeading) {
             operatorEntryGesture
         }
@@ -69,7 +74,12 @@ struct EyeTestView: View {
             isPresented: $model.showingOperatorInput,
             onDismiss: operatorInputDidDismiss
         ) {
-            OperatorInputView(responses: $operatorResponses, submit: submitOperatorResponses)
+            OperatorInputView(
+                targets: model.targets,
+                geometry: geometry,
+                responses: $operatorResponses,
+                submit: submitOperatorResponses
+            )
         }
     }
 
@@ -91,7 +101,7 @@ struct EyeTestView: View {
     private func beginTest() {
         dependencies.brightness.applyScreeningBrightness()
         dependencies.sensorCoordinator.start()
-        model.begin(using: dependencies)
+        model.begin(using: dependencies, session: session)
     }
 
     private func observe(_ sample: DistanceSample?) {
@@ -157,22 +167,37 @@ private struct EyeTestProgressHeader: View {
 
 private struct OperatorInputView: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var responses: [OptotypeDirection]
+    let targets: [OptotypeDirection]
+    let geometry: OptotypeGeometry?
+    @Binding var responses: [OptotypeResponse]
     let submit: () -> Void
 
     private var responseSummary: String {
-        responses.map { $0.rawValue.prefix(1).uppercased() }.joined(separator: "  ")
+        responses.map { $0.auditCode }.joined(separator: "  ")
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                Text("Enter seven directions")
+            ScrollView {
+                VStack(spacing: 24) {
+                Text("Operator response")
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
 
+                if targets.indices.contains(responses.count), let geometry {
+                    LandoltSingleTargetView(
+                        geometry: geometry,
+                        direction: targets[responses.count]
+                    )
+                    .frame(minHeight: 180)
+                }
+
+                Text("Target \(min(responses.count + 1, 7)) of 7")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+
                 Text(responseSummary)
-                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .font(.system(.title2, design: .monospaced, weight: .bold))
                     .frame(maxWidth: .infinity, minHeight: 60)
                     .background(SEENATheme.background)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -180,22 +205,28 @@ private struct OperatorInputView: View {
                 LazyVGrid(columns: [.init(), .init()], spacing: 14) {
                     ForEach(OptotypeDirection.allCases, id: \.self) { direction in
                         Button(direction.rawValue.capitalized) {
-                            add(direction)
+                            add(OptotypeResponse(direction))
                         }
                         .buttonStyle(SecondaryActionStyle())
+                        .frame(minHeight: 44)
                     }
                 }
+
+                Button("I can’t see it / Not visible") {
+                    add(.notVisible)
+                }
+                .buttonStyle(PrimaryActionStyle())
+                .frame(minHeight: 52)
 
                 Button("Undo", action: undo)
                     .disabled(responses.isEmpty)
 
-                Spacer()
-
-                Button("Submit operator responses", action: submit)
-                    .buttonStyle(PrimaryActionStyle())
-                    .disabled(responses.count != 7)
+                    Button("Submit operator responses", action: submit)
+                        .buttonStyle(PrimaryActionStyle())
+                        .disabled(responses.count != 7)
+                }
+                .padding(24)
             }
-            .padding(24)
             .navigationTitle("Operator fallback")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -206,9 +237,9 @@ private struct OperatorInputView: View {
         }
     }
 
-    private func add(_ direction: OptotypeDirection) {
+    private func add(_ response: OptotypeResponse) {
         guard responses.count < 7 else { return }
-        responses.append(direction)
+        responses.append(response)
     }
 
     private func undo() {

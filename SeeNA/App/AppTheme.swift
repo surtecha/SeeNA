@@ -14,7 +14,7 @@ enum SEENATheme {
     static let danger = Color(red: 0.72, green: 0.12, blue: 0.13)
     static let warning = Color(red: 0.72, green: 0.42, blue: 0.04)
 
-    static let prototypeFooter = "Research prototype · not a prescription"
+    static let screeningFooter = "Vision screening · not a prescription"
 }
 
 struct SEENABackdrop: View {
@@ -45,6 +45,7 @@ struct FloatingAction {
 }
 
 struct ActionScaffold<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let eyebrow: String
     let title: String
     let subtitle: String?
@@ -96,7 +97,28 @@ struct ActionScaffold<Content: View>: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 7) {
                 GlassEffectContainer(spacing: 12) {
-                    HStack(spacing: 12) {
+                    Group {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            VStack(spacing: 12) { actionButtons }
+                        } else {
+                            HStack(spacing: 12) { actionButtons }
+                        }
+                    }
+                }
+
+                Text(SEENATheme.screeningFooter)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(SEENATheme.secondaryInk)
+                    .accessibilityLabel("Vision screening. This is not an eyeglass prescription or diagnosis.")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
                         if let secondaryAction {
                             Button(action: secondaryAction.action) {
                                 Image(systemName: secondaryAction.systemImage)
@@ -110,24 +132,15 @@ struct ActionScaffold<Content: View>: View {
                         Button(action: primaryAction) {
                             Label(primaryTitle, systemImage: primarySystemImage)
                                 .font(.headline.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.vertical, 14)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 54)
+                                .frame(minHeight: 54)
                         }
                         .buttonStyle(.glassProminent)
                         .tint(SEENATheme.ink)
                         .disabled(!primaryEnabled)
-                    }
-                }
-
-                Text(SEENATheme.prototypeFooter)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(SEENATheme.tertiaryInk)
-                    .accessibilityLabel("Research prototype. This is not an eyeglass prescription or diagnosis.")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-        }
     }
 }
 
@@ -139,6 +152,8 @@ struct PrimaryActionStyle: ButtonStyle {
             .font(.headline.weight(.semibold))
             .frame(maxWidth: .infinity)
             .frame(minHeight: 56)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 4)
             .foregroundStyle(Color.white)
             .background(isEnabled ? SEENATheme.ink : SEENATheme.secondaryInk, in: Capsule())
             .overlay {
@@ -159,6 +174,8 @@ struct SecondaryActionStyle: ButtonStyle {
             .font(.headline.weight(.semibold))
             .frame(maxWidth: .infinity)
             .frame(minHeight: 54)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 4)
             .foregroundStyle(isEnabled ? SEENATheme.ink : SEENATheme.tertiaryInk)
             .background(SEENATheme.background, in: Capsule())
             .overlay {
@@ -280,9 +297,9 @@ struct ProgressLine: View {
 
 struct DisclaimerFooter: View {
     var body: some View {
-        Text(SEENATheme.prototypeFooter)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(SEENATheme.tertiaryInk)
+        Text(SEENATheme.screeningFooter)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(SEENATheme.secondaryInk)
             .multilineTextAlignment(.center)
             .lineSpacing(2)
             .frame(maxWidth: .infinity)
@@ -295,7 +312,7 @@ struct DisclaimerFooter: View {
                     .fill(SEENATheme.line)
                     .frame(height: 1)
             }
-            .accessibilityLabel(SEENATheme.prototypeFooter)
+            .accessibilityLabel(SEENATheme.screeningFooter)
     }
 }
 

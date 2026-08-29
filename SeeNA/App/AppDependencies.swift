@@ -66,4 +66,11 @@ final class AppDependencies: ObservableObject {
             brightness: BrightnessManager(isEnabled: false)
         )
     }
+
+    func resetForNewScreening() {
+        audioRecorder.stop()
+        spokenPrompts.stop()
+        sensorCoordinator.resetForNewScreening()
+        brightness.restore()
+    }
 }

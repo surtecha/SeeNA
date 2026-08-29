@@ -10,6 +10,8 @@ enum BlockMeasurementIssue: String, Codable, Hashable, Sendable {
     case headPose
     case poorLighting
     case multipleFaces
+    case gazeUnavailable
+    case gazeOffCentre
 }
 
 /// A block-level view of the sensor stream captured while a participant sees
@@ -28,6 +30,8 @@ struct BlockMeasurementQuality: Equatable, Sendable {
     let headPoseCoverage: Double
     let lightingCoverage: Double
     let singleFaceCoverage: Double
+    let gazeAvailableCoverage: Double
+    let gazeAlignedCoverage: Double
     let issues: [BlockMeasurementIssue]
 
     var isAccepted: Bool { issues.isEmpty }
@@ -50,6 +54,10 @@ struct BlockMeasurementQuality: Equatable, Sendable {
                 return .poorLighting
             case .multipleFaces:
                 return .multipleFaces
+            case .gazeUnavailable:
+                return .gazeUnavailable
+            case .gazeOffCentre:
+                return .gazeOffCentre
             }
         }
         return Array(Set(mapped)).sorted { $0.rawValue < $1.rawValue }
@@ -95,6 +103,16 @@ enum BlockMeasurementQualityEngine {
         }.count, outOf: count)
         let lightingCoverage = coverage(samples.filter { $0.luminance >= 0.12 }.count, outOf: count)
         let singleFaceCoverage = coverage(samples.filter { $0.faceCount == 1 }.count, outOf: count)
+        let gazeAvailableCoverage = coverage(samples.filter {
+            $0.gazeYawErrorDegrees != nil && $0.gazePitchErrorDegrees != nil
+        }.count, outOf: count)
+        let gazeAlignedCoverage = coverage(samples.filter {
+            GazeReadinessPolicy.classify(
+                yawErrorDegrees: $0.gazeYawErrorDegrees,
+                pitchErrorDegrees: $0.gazePitchErrorDegrees,
+                thresholdDegrees: GazeReadinessPolicy.exitThresholdDegrees
+            ) == .aligned
+        }.count, outOf: count)
 
         var issues: [BlockMeasurementIssue] = []
         if count < requiredSamples { issues.append(.insufficientSamples) }
@@ -113,6 +131,11 @@ enum BlockMeasurementQualityEngine {
         if headPoseCoverage < requiredCoverage { issues.append(.headPose) }
         if lightingCoverage < requiredCoverage { issues.append(.poorLighting) }
         if singleFaceCoverage < requiredCoverage { issues.append(.multipleFaces) }
+        if gazeAvailableCoverage < GazeReadinessPolicy.minimumBlockCoverage {
+            issues.append(.gazeUnavailable)
+        } else if gazeAlignedCoverage < GazeReadinessPolicy.minimumBlockCoverage {
+            issues.append(.gazeOffCentre)
+        }
 
         return BlockMeasurementQuality(
             sampleCount: count,
@@ -126,6 +149,8 @@ enum BlockMeasurementQualityEngine {
             headPoseCoverage: headPoseCoverage,
             lightingCoverage: lightingCoverage,
             singleFaceCoverage: singleFaceCoverage,
+            gazeAvailableCoverage: gazeAvailableCoverage,
+            gazeAlignedCoverage: gazeAlignedCoverage,
             issues: Array(Set(issues)).sorted { $0.rawValue < $1.rawValue }
         )
     }

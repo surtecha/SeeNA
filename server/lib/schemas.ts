@@ -4,6 +4,10 @@ export const statusSchema = z.enum([
   "validEstimate",
   "noMyopiaDetectedWithinRange",
   "strongerThanSupportedRange",
+  "experimentalThresholdObserved",
+  "experimentalFarthestTargetPassed",
+  "experimentalAdverseBoundary",
+  "experimentalTaskCompleted",
   "unreliableMeasurement",
   "deviceUnsupported",
   "userIneligible"
@@ -13,28 +17,32 @@ export const qualitySchema = z.enum(["good", "moderate", "poor", "unavailable"])
 
 export const eyeFactsSchema = z.object({
   status: statusSchema,
-  quality: qualitySchema,
-  displayedEstimateDiopter: z.number().finite().nullable().optional(),
-  thresholdDistanceMetres: z.number().finite().nullable().optional(),
-  lastFailDiopter: z.number().finite().nullable().optional(),
-  firstPassDiopter: z.number().finite().nullable().optional(),
-  sensorUncertaintyDiopter: z.number().finite().nullable().optional(),
-  repeatabilityDiopter: z.number().finite().nullable().optional()
+  quality: qualitySchema
 }).strict();
 
 export const explanationRequestSchema = z.object({
   locale: z.string().min(2).max(20),
   rightEye: eyeFactsSchema.nullable().optional(),
   leftEye: eyeFactsSchema.nullable().optional(),
-  comparison: z.string().max(400),
+  comparisonCode: z.enum([
+    "eyes_broadly_similar",
+    "eyes_noticeably_different",
+    "review_eyes_separately",
+    "repeat_needed"
+  ]),
   actionCode: z.enum([
     "professional_exam_recommended",
     "routine_exam_recommended",
     "no_reliable_result",
     "accessibility_only"
   ]),
-  limitations: z.array(z.string().min(1).max(120)).min(1).max(10),
-  localMathConsistent: z.boolean()
+  limitations: z.array(z.enum([
+    "not_a_prescription",
+    "hyperopia_not_assessed",
+    "clinical_accuracy_not_established",
+    "phone_screen_far_point_poc_not_clinically_validated"
+  ])).min(1).max(4),
+  localIntegrityCode: z.enum(["consistent", "review_required"])
 }).strict();
 
 const explanationDraftShape = {

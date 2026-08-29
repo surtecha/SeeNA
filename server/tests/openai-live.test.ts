@@ -11,19 +11,13 @@ describe.skipIf(!live)("OpenAI live contracts", () => {
       locale: "en-AU",
       rightEye: {
         status: "validEstimate",
-        quality: "good",
-        displayedEstimateDiopter: -2,
-        thresholdDistanceMetres: 0.5,
-        lastFailDiopter: -2.25,
-        firstPassDiopter: -2,
-        sensorUncertaintyDiopter: 0.12,
-        repeatabilityDiopter: 0.25
+        quality: "good"
       },
       leftEye: { status: "unreliableMeasurement", quality: "poor" },
-      comparison: "The right-eye screening completed; the left-eye screening did not produce a reliable result.",
+      comparisonCode: "repeat_needed",
       actionCode: "professional_exam_recommended",
       limitations: ["not_a_prescription", "hyperopia_not_assessed", "clinical_accuracy_not_established"],
-      localMathConsistent: true
+      localIntegrityCode: "consistent"
     });
     expect(result.usedFallback).toBe(false);
     expect(result.disclaimer.toLowerCase()).toMatch(/prototype|prescription|diagnos/);

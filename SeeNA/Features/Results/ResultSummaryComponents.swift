@@ -6,6 +6,24 @@ struct ResultPair: View {
     let landolt: EyeScreeningResult?
     let gabor: GaborScreeningResult?
     let integrity: ResultIntegrityValidation?
+    let gaborIntegrity: GaborResultIntegrityValidation?
+    let numericResultsAllowed: Bool?
+
+    init(
+        eye: Eye,
+        landolt: EyeScreeningResult?,
+        gabor: GaborScreeningResult?,
+        integrity: ResultIntegrityValidation?,
+        gaborIntegrity: GaborResultIntegrityValidation? = nil,
+        numericResultsAllowed: Bool?
+    ) {
+        self.eye = eye
+        self.landolt = landolt
+        self.gabor = gabor
+        self.integrity = integrity
+        self.gaborIntegrity = gaborIntegrity
+        self.numericResultsAllowed = numericResultsAllowed
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -13,7 +31,7 @@ struct ResultPair: View {
                 .font(.title3.bold())
             Divider()
             ResultMetric(label: "Landolt C", value: landoltValue)
-            ResultMetric(label: "Gabor pattern", value: gaborValue)
+            ResultMetric(label: "Gabor pattern task", value: gaborValue)
         }
         .padding(16)
         .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
@@ -21,23 +39,15 @@ struct ResultPair: View {
     }
 
     private var landoltValue: String {
-        if integrity?.isValid == false { return "Repeat needed · review required" }
-        guard let landolt else { return "Repeat needed" }
-        switch landolt.status {
-        case .validEstimate:
-            if let fail = landolt.lastFailDiopter, let pass = landolt.firstPassDiopter {
-                return String(format: "%.2f to %.2f D", max(fail, pass), min(fail, pass))
-            }
-            return "Estimate available"
-        case .noMyopiaDetectedWithinRange: return "No significant myopia detected in POC range"
-        case .strongerThanSupportedRange: return "Outside POC range"
-        case .unreliableMeasurement: return "Repeat needed"
-        case .deviceUnsupported: return "Device unsupported"
-        case .userIneligible: return "Not suitable"
-        }
+        ResultsPresentationPolicy.landoltDisplayValue(
+            result: landolt,
+            integrityValid: integrity?.isValid,
+            numericResultsAllowed: numericResultsAllowed
+        )
     }
 
     private var gaborValue: String {
+        if gaborIntegrity?.isValid == false { return "Repeat needed · evidence review required" }
         guard let gabor, gabor.status == .completed else { return "Repeat needed" }
         return "Completed"
     }
@@ -46,32 +56,25 @@ struct ResultPair: View {
         eye: Eye,
         landolt: EyeScreeningResult?,
         gabor: GaborScreeningResult?,
-        integrity: ResultIntegrityValidation?
+        integrity: ResultIntegrityValidation?,
+        gaborIntegrity: GaborResultIntegrityValidation? = nil,
+        numericResultsAllowed: Bool?
     ) -> String {
         let eyeName = eye.displayName
-        let landoltText: String
-        if integrity?.isValid == false {
-            landoltText = "\(eyeName) eye result needs repeating because its internal consistency checks need review."
-        } else if let landolt, landolt.status == .validEstimate,
-                  let fail = landolt.lastFailDiopter, let pass = landolt.firstPassDiopter {
-            landoltText = String(
-                format: "%@ eye approximate myopia range, minus %.2f to minus %.2f diopters.",
-                eyeName,
-                abs(max(fail, pass)),
-                abs(min(fail, pass))
-            )
-        } else if landolt?.status == .noMyopiaDetectedWithinRange {
-            landoltText = "\(eyeName) eye showed no significant myopia within the supported POC range."
-        } else if landolt?.status == .strongerThanSupportedRange {
-            landoltText = "\(eyeName) eye was outside the supported POC range."
-        } else {
-            landoltText = "\(eyeName) eye Landolt test needs repeating."
-        }
+        let landoltText = ResultsPresentationPolicy.spokenLandoltSummary(
+            eye: eye,
+            result: landolt,
+            integrityValid: integrity?.isValid,
+            numericResultsAllowed: numericResultsAllowed
+        )
 
-        if gabor?.status == .completed {
-            return "\(landoltText) \(eyeName) eye Gabor orientation task complete."
+        if gaborIntegrity?.isValid == false {
+            return "\(landoltText) The Gabor pattern task needs repeating."
         }
-        return "\(landoltText) The Gabor check needs repeating."
+        if gabor?.status == .completed {
+            return "\(landoltText) \(eyeName) eye Gabor pattern task complete."
+        }
+        return "\(landoltText) The Gabor pattern task needs repeating."
     }
 }
 

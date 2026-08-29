@@ -1,5 +1,11 @@
 import Foundation
 
+enum SpeechOutcome: Equatable, Sendable {
+    case finished
+    case cancelled
+    case failed
+}
+
 enum Eye: String, Codable, CaseIterable, Sendable {
     case right
     case left
@@ -117,6 +123,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
     let outcome: TrialOutcome
     let responseSource: ResponseSource
     let transcript: String?
+    let quality: BlockQuality?
     let timestamp: Date
 
     init(
@@ -129,6 +136,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         outcome: TrialOutcome,
         responseSource: ResponseSource,
         transcript: String?,
+        quality: BlockQuality? = nil,
         timestamp: Date = Date()
     ) {
         self.id = id
@@ -140,6 +148,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         self.outcome = outcome
         self.responseSource = responseSource
         self.transcript = transcript
+        self.quality = quality
         self.timestamp = timestamp
     }
 
@@ -155,6 +164,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         outcome: TrialOutcome,
         responseSource: ResponseSource,
         transcript: String?,
+        quality: BlockQuality? = nil,
         timestamp: Date = Date()
     ) {
         self.init(
@@ -167,6 +177,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
             outcome: outcome,
             responseSource: responseSource,
             transcript: transcript,
+            quality: quality,
             timestamp: timestamp
         )
     }
@@ -187,9 +198,22 @@ enum ScreeningStatus: String, Codable, Sendable {
     case validEstimate
     case noMyopiaDetectedWithinRange
     case strongerThanSupportedRange
+    /// Nonnumeric equivalents preserve what happened in the task without
+    /// presenting an unvalidated refractive measurement.
+    case experimentalThresholdObserved
+    case experimentalFarthestTargetPassed
+    case experimentalAdverseBoundary
+    case experimentalTaskCompleted
     case unreliableMeasurement
     case deviceUnsupported
     case userIneligible
+}
+
+enum ScreeningAction: String, Codable, Sendable {
+    case professionalReviewRecommended
+    case routineExamRecommended
+    case repeatRequired
+    case unavailable
 }
 
 enum QualityLabel: String, Codable, Sendable {
@@ -199,7 +223,7 @@ enum QualityLabel: String, Codable, Sendable {
     case unavailable
 }
 
-enum ResultWarning: String, Codable, Sendable {
+enum ResultWarning: String, Codable, Hashable, Sendable {
     case researchPrototype
     case notPrescription
     case hyperopiaNotAssessed
@@ -280,6 +304,29 @@ struct ValidationSummary: Codable, Equatable, Sendable {
     )
 }
 
+/// Independent evidence that the requested optotype pixels and SwiftUI points
+/// were physically checked on the exact display. Distance tape observations do
+/// not satisfy this gate.
+struct DisplayRasterValidation: Codable, Equatable, Sendable {
+    let sampleCount: Int
+    let nativePixelWidth: Int
+    let nativePixelHeight: Int
+    let displayScale: Double
+    let pixelsPerInch: Double
+    let validatedAt: Date?
+    let notes: String
+}
+
+/// Independent participant-level evidence for the complete measurement
+/// protocol. This is intentionally absent from bundled POC profiles.
+struct ClinicalValidationEvidence: Codable, Equatable, Sendable {
+    let participantCount: Int
+    let observationCount: Int
+    let protocolIdentifier: String
+    let validatedAt: Date?
+    let notes: String
+}
+
 struct DeviceProfile: Codable, Equatable, Identifiable, Sendable {
     var id: String { hardwareIdentifiers.first ?? marketingFamily }
 
@@ -298,7 +345,49 @@ struct DeviceProfile: Codable, Equatable, Identifiable, Sendable {
     let minimumValidatedDistance: Double
     let maximumValidatedDistance: Double
     let validationEvidence: ValidationSummary
+    let displayRasterValidation: DisplayRasterValidation?
+    let clinicalValidationEvidence: ClinicalValidationEvidence?
     let isValidated: Bool
+
+    init(
+        schemaVersion: Int,
+        profileVersion: Int,
+        hardwareIdentifiers: [String],
+        marketingFamily: String,
+        variant: String,
+        nativePixelWidth: Int,
+        nativePixelHeight: Int,
+        displayScale: Double,
+        pixelsPerInch: Double,
+        expectedCameraType: CameraType,
+        calibration: DistanceCalibration,
+        qualityThresholds: QualityThresholds,
+        minimumValidatedDistance: Double,
+        maximumValidatedDistance: Double,
+        validationEvidence: ValidationSummary,
+        displayRasterValidation: DisplayRasterValidation? = nil,
+        clinicalValidationEvidence: ClinicalValidationEvidence? = nil,
+        isValidated: Bool
+    ) {
+        self.schemaVersion = schemaVersion
+        self.profileVersion = profileVersion
+        self.hardwareIdentifiers = hardwareIdentifiers
+        self.marketingFamily = marketingFamily
+        self.variant = variant
+        self.nativePixelWidth = nativePixelWidth
+        self.nativePixelHeight = nativePixelHeight
+        self.displayScale = displayScale
+        self.pixelsPerInch = pixelsPerInch
+        self.expectedCameraType = expectedCameraType
+        self.calibration = calibration
+        self.qualityThresholds = qualityThresholds
+        self.minimumValidatedDistance = minimumValidatedDistance
+        self.maximumValidatedDistance = maximumValidatedDistance
+        self.validationEvidence = validationEvidence
+        self.displayRasterValidation = displayRasterValidation
+        self.clinicalValidationEvidence = clinicalValidationEvidence
+        self.isValidated = isValidated
+    }
 }
 
 struct DistanceSample: Codable, Equatable, Identifiable, Sendable {
@@ -372,6 +461,8 @@ enum BlockDiscardReason: String, Codable, Hashable, Sendable {
     case responseCount
     case orientationChanged
     case multipleFaces
+    case gazeUnavailable
+    case gazeOffCentre
     case poorLighting
     case serviceUnavailable
 }
@@ -383,7 +474,28 @@ struct BlockQuality: Codable, Equatable, Sendable {
     let distanceStable: Bool
     let audioLevelAdequate: Bool
     let targetGeometryValid: Bool
+    let gazeCoverage: Double?
     let discardReasons: [BlockDiscardReason]
+
+    init(
+        trackingCoverage: Double,
+        phoneStable: Bool,
+        headPoseValid: Bool,
+        distanceStable: Bool,
+        audioLevelAdequate: Bool,
+        targetGeometryValid: Bool,
+        gazeCoverage: Double? = nil,
+        discardReasons: [BlockDiscardReason]
+    ) {
+        self.trackingCoverage = trackingCoverage
+        self.phoneStable = phoneStable
+        self.headPoseValid = headPoseValid
+        self.distanceStable = distanceStable
+        self.audioLevelAdequate = audioLevelAdequate
+        self.targetGeometryValid = targetGeometryValid
+        self.gazeCoverage = gazeCoverage
+        self.discardReasons = discardReasons
+    }
 
     var isValid: Bool { discardReasons.isEmpty }
 }
@@ -409,6 +521,15 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
     let quality: BlockQuality
     let responseSource: ResponseSource
     let transcript: String?
+    /// Geometry actually frozen on screen for this block. Optional fields keep
+    /// sessions saved before schema v2 decodable.
+    let presentationDistanceMetres: Double?
+    let renderedPixelHeight: Int?
+    let renderedPointHeight: Double?
+    let renderedAngularSizeArcMinutes: Double?
+    let actualAngularSizeArcMinutes: Double?
+    let geometryDistanceDriftFraction: Double?
+    let presentedGeometry: PresentedOptotypeGeometry?
     let timestamp: Date
 
     init(
@@ -425,6 +546,13 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
         quality: BlockQuality,
         responseSource: ResponseSource,
         transcript: String?,
+        presentationDistanceMetres: Double? = nil,
+        renderedPixelHeight: Int? = nil,
+        renderedPointHeight: Double? = nil,
+        renderedAngularSizeArcMinutes: Double? = nil,
+        actualAngularSizeArcMinutes: Double? = nil,
+        geometryDistanceDriftFraction: Double? = nil,
+        presentedGeometry: PresentedOptotypeGeometry? = nil,
         timestamp: Date = Date()
     ) {
         self.id = id
@@ -440,6 +568,13 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
         self.quality = quality
         self.responseSource = responseSource
         self.transcript = transcript
+        self.presentationDistanceMetres = presentationDistanceMetres
+        self.renderedPixelHeight = renderedPixelHeight
+        self.renderedPointHeight = renderedPointHeight
+        self.renderedAngularSizeArcMinutes = renderedAngularSizeArcMinutes
+        self.actualAngularSizeArcMinutes = actualAngularSizeArcMinutes
+        self.geometryDistanceDriftFraction = geometryDistanceDriftFraction
+        self.presentedGeometry = presentedGeometry
         self.timestamp = timestamp
     }
 
@@ -459,6 +594,13 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
         quality: BlockQuality,
         responseSource: ResponseSource,
         transcript: String?,
+        presentationDistanceMetres: Double? = nil,
+        renderedPixelHeight: Int? = nil,
+        renderedPointHeight: Double? = nil,
+        renderedAngularSizeArcMinutes: Double? = nil,
+        actualAngularSizeArcMinutes: Double? = nil,
+        geometryDistanceDriftFraction: Double? = nil,
+        presentedGeometry: PresentedOptotypeGeometry? = nil,
         timestamp: Date = Date()
     ) {
         self.init(
@@ -475,6 +617,13 @@ struct TrialBlock: Codable, Equatable, Identifiable, Sendable {
             quality: quality,
             responseSource: responseSource,
             transcript: transcript,
+            presentationDistanceMetres: presentationDistanceMetres,
+            renderedPixelHeight: renderedPixelHeight,
+            renderedPointHeight: renderedPointHeight,
+            renderedAngularSizeArcMinutes: renderedAngularSizeArcMinutes,
+            actualAngularSizeArcMinutes: actualAngularSizeArcMinutes,
+            geometryDistanceDriftFraction: geometryDistanceDriftFraction,
+            presentedGeometry: presentedGeometry,
             timestamp: timestamp
         )
     }
@@ -492,12 +641,46 @@ struct EyeScreeningResult: Codable, Equatable, Sendable {
     let trackingQuality: QualityLabel
     let responseConsistency: QualityLabel
     let warnings: [ResultWarning]
+    /// A qualitative, locally-derived action retained even when numeric
+    /// measurements are stripped from an unvalidated result.
+    let recommendedAction: ScreeningAction?
+
+    init(
+        eye: Eye,
+        status: ScreeningStatus,
+        lastFailDiopter: Double?,
+        firstPassDiopter: Double?,
+        displayedEstimateDiopter: Double?,
+        thresholdDistanceMetres: Double?,
+        sensorUncertaintyDiopter: Double?,
+        repeatabilityDiopter: Double?,
+        trackingQuality: QualityLabel,
+        responseConsistency: QualityLabel,
+        warnings: [ResultWarning],
+        recommendedAction: ScreeningAction? = nil
+    ) {
+        self.eye = eye
+        self.status = status
+        self.lastFailDiopter = lastFailDiopter
+        self.firstPassDiopter = firstPassDiopter
+        self.displayedEstimateDiopter = displayedEstimateDiopter
+        self.thresholdDistanceMetres = thresholdDistanceMetres
+        self.sensorUncertaintyDiopter = sensorUncertaintyDiopter
+        self.repeatabilityDiopter = repeatabilityDiopter
+        self.trackingQuality = trackingQuality
+        self.responseConsistency = responseConsistency
+        self.warnings = warnings
+        self.recommendedAction = recommendedAction
+    }
 }
 
 struct ScreeningSession: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let createdAt: Date
     var deviceProfile: DeviceProfile?
+    /// True only after exact-model physical calibration and second-face
+    /// detection gates pass. A missing value from an older session means false.
+    var numericResultsAllowed: Bool?
     var baselineDistanceMetres: Double?
     var rightEyeTrials: [TrialBlock]
     var leftEyeTrials: [TrialBlock]
@@ -512,6 +695,7 @@ struct ScreeningSession: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.createdAt = createdAt
         deviceProfile = nil
+        numericResultsAllowed = false
         baselineDistanceMetres = nil
         rightEyeTrials = []
         leftEyeTrials = []

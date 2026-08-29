@@ -37,12 +37,19 @@ enum SpokenTestCountdown {
             return true
         }
 
-        await withTaskCancellationHandler {
-            await prompts.speakAfterNavigation(
+        let openingOutcome = await withTaskCancellationHandler {
+            await prompts.speakAfterNavigationForTransition(
                 startPrompt(responseInstruction: responseInstruction)
             )
         } onCancel: {
             Task { @MainActor in prompts.stop() }
+        }
+
+        guard SpeechProgressionPolicy.shouldAdvance(after: openingOutcome) else {
+            return await finishInterruptedCountdown(
+                positionMonitor: positionMonitor,
+                prompts: prompts
+            )
         }
 
         guard countdownCanContinue(positionState: positionState) else {
@@ -58,7 +65,12 @@ enum SpokenTestCountdown {
         // naturally without ever overlapping the next count.
         let countdownStartedAt = Date()
         for (index, word) in countdownWords.enumerated() {
-            await prompts.speakAndWait(word)
+            guard SpeechProgressionPolicy.shouldAdvance(after: await prompts.speakForTransition(word)) else {
+                return await finishInterruptedCountdown(
+                    positionMonitor: positionMonitor,
+                    prompts: prompts
+                )
+            }
             guard countdownCanContinue(positionState: positionState) else {
                 return await finishInterruptedCountdown(
                     positionMonitor: positionMonitor,
@@ -78,13 +90,18 @@ enum SpokenTestCountdown {
             }
         }
 
-        await prompts.speakAndWait("Start.")
+        guard SpeechProgressionPolicy.shouldAdvance(after: await prompts.speakForTransition("Start.")) else {
+            return await finishInterruptedCountdown(
+                positionMonitor: positionMonitor,
+                prompts: prompts
+            )
+        }
 
         positionMonitor.cancel()
         let positionHeld = await positionMonitor.value
         guard !Task.isCancelled else { return false }
         guard positionHeld else {
-            await prompts.speakAndWait(
+            _ = await prompts.speakForTransition(
                 "Your position changed. I will guide you again."
             )
             return false
@@ -97,11 +114,11 @@ enum SpokenTestCountdown {
         responseInstruction: String,
         isRetry: Bool = false
     ) async -> Bool {
-        await prompts.speakAndWait(
+        guard SpeechProgressionPolicy.shouldAdvance(after: await prompts.speakForTransition(
             isRetry
                 ? "Let’s try that one again. \(responseInstruction)"
                 : "Next. \(responseInstruction)"
-        )
+        )) else { return false }
         return !Task.isCancelled
     }
 
@@ -132,7 +149,7 @@ enum SpokenTestCountdown {
         _ = await positionMonitor.value
         prompts.stop()
         guard !Task.isCancelled else { return false }
-        await prompts.speakAndWait("Your position changed. I will guide you again.")
+        _ = await prompts.speakForTransition("Your position changed. I will guide you again.")
         return false
     }
 }

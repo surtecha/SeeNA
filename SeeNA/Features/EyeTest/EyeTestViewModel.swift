@@ -43,6 +43,7 @@ final class EyeTestViewModel: ObservableObject {
     @Published private(set) var completedTrialCount = 0
     @Published private(set) var isVoiceAttemptActive = false
     @Published var showingOperatorInput = false
+    @Published private(set) var presentedGeometry: PresentedOptotypeGeometry?
 
     let totalTrialCount = SequentialOptotypeSession.requiredTargetCount
 
@@ -64,6 +65,10 @@ final class EyeTestViewModel: ObservableObject {
     private var activeVoiceTask: Task<Void, Never>?
     private var voiceFlowGeneration = UUID()
     private var operatorTakeoverAwaitingResolution = false
+    private var gazeTracker = GazeReadinessTracker()
+    private var gazeState: GazeReadiness = .unavailable
+    private var simulatorDistanceOwner: UUID?
+    private var operatorModeRequested = false
 
     init(eye: Eye) {
         self.eye = eye
@@ -111,9 +116,15 @@ final class EyeTestViewModel: ObservableObject {
             && targets.count == totalTrialCount
     }
 
-    func begin(using dependencies: AppDependencies) {
+    func begin(using dependencies: AppDependencies, session: AppSession) {
         guard !hasBegun, candidate != nil else { return }
         hasBegun = true
+        operatorModeRequested = session.responseMode == .operatorOnly
+        simulatorDistanceOwner = dependencies.sensorCoordinator.claimSimulatorDistanceOwner()
+        dependencies.sensorCoordinator.setSimulatorTargetDistance(
+            targetDistance,
+            owner: simulatorDistanceOwner
+        )
         phase = .guiding
         dependencies.spokenPrompts.preloadNavigationGuidance(additionalTexts: [
             SpokenTestCountdown.startPrompt(
@@ -124,13 +135,19 @@ final class EyeTestViewModel: ObservableObject {
     }
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
-        dependencies.sensorCoordinator.setSimulatorTargetDistance(targetDistance)
         mostRecentSample = sample
+        gazeState = gazeTracker.update(
+            yawErrorDegrees: sample?.gazeYawErrorDegrees,
+            pitchErrorDegrees: sample?.gazePitchErrorDegrees
+        )
         if isCollectingMeasurementSamples, let sample {
             // Keep every one of the seven answer-recording windows. The
             // recorder bounds each attempt, so this stays small while the
             // quality gate still sees early movement and the final answer.
             blockSamples.append(sample)
+            if blockSamples.count > 280 {
+                blockSamples.removeFirst(blockSamples.count - 280)
+            }
         }
 
         let measured = sample.flatMap {
@@ -149,6 +166,7 @@ final class EyeTestViewModel: ObservableObject {
             && abs($0.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
             && abs($0.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
             && $0.luminance >= 0.12
+            && gazeState == .aligned
         } == true
         let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
             ?? Date().timeIntervalSinceReferenceDate
@@ -178,6 +196,15 @@ final class EyeTestViewModel: ObservableObject {
                 positioningAccepted = true
                 needsPositionRecheck = false
                 lockedPresentationDistance = currentDistance ?? targetDistance
+                if let profile = session.activeSession.deviceProfile {
+                    presentedGeometry = LiveEyeTestGeometryPolicy.calculate(
+                        distanceMetres: lockedPresentationDistance ?? targetDistance,
+                        pixelsPerInch: profile.pixelsPerInch,
+                        nativeScale: profile.displayScale
+                    )
+                } else {
+                    presentedGeometry = nil
+                }
                 guidanceCue = .stop
                 voiceScheduler.acceptTarget()
                 targetTracker.reset()
@@ -251,8 +278,17 @@ final class EyeTestViewModel: ObservableObject {
             isRunningBlock = false
             positioningAccepted = false
             lockedPresentationDistance = nil
+            presentedGeometry = nil
             phase = .guiding
             announceGuidance(using: dependencies)
+            return
+        }
+
+        if operatorModeRequested || !dependencies.network.isConnected {
+            isRunningBlock = false
+            phase = .retry(operatorModeRequested
+                ? "Microphone response is off. Use the visible operator response controls."
+                : "Voice service is offline. Use operator input without waiting for the network.")
             return
         }
 
@@ -284,7 +320,10 @@ final class EyeTestViewModel: ObservableObject {
                     guard activeSession.retryCurrentTarget() != nil else { return }
                     isCollectingMeasurementSamples = false
                     phase = .presenting
-                    await dependencies.spokenPrompts.speakAndWait(spokenPrompt)
+                    guard await dependencies.spokenPrompts.speakForTransition(spokenPrompt) == .finished else {
+                        phase = .retry("The voice guide paused. Repeat this circle or use operator input.")
+                        return
+                    }
                     guard voiceFlowIsCurrent(generation) else { return }
                     continue
 
@@ -318,7 +357,8 @@ final class EyeTestViewModel: ObservableObject {
                             transcript: blockTranscripts.joined(separator: " | "),
                             audioLevelAdequate: true,
                             dependencies: dependencies,
-                            session: session
+                            session: session,
+                            generation: generation
                         )
                         guard voiceFlowIsCurrent(generation) else { return }
                         return
@@ -330,6 +370,9 @@ final class EyeTestViewModel: ObservableObject {
             } catch is CancellationError {
                 isCollectingMeasurementSamples = false
                 isRunningBlock = false
+                if generation == voiceFlowGeneration, candidate != nil {
+                    phase = .retry("The response was interrupted. Repeat this circle or use operator input.")
+                }
                 return
             } catch {
                 guard voiceFlowIsCurrent(generation) else { return }
@@ -337,10 +380,9 @@ final class EyeTestViewModel: ObservableObject {
                 // test into a button-driven flow or consume the target.
                 isCollectingMeasurementSamples = false
                 phase = .presenting
-                await dependencies.spokenPrompts.speakAndWait(
-                    "Connection paused. Same circle. Say a direction, or say I can't see it."
-                )
-                guard voiceFlowIsCurrent(generation) else { return }
+                phase = .retry("Voice service paused. Use operator input, or repeat the same circle.")
+                isRunningBlock = false
+                return
             }
         }
     }
@@ -420,6 +462,7 @@ final class EyeTestViewModel: ObservableObject {
         // Operator takeover is atomic: the sheet is not exposed until the live
         // recorder, speech, task, and generation have all been invalidated.
         invalidateActiveVoiceFlow(using: dependencies)
+        isCollectingMeasurementSamples = true
         operatorTakeoverAwaitingResolution = true
         showingOperatorInput = true
     }
@@ -435,6 +478,7 @@ final class EyeTestViewModel: ObservableObject {
         guard operatorTakeoverAwaitingResolution else { return }
         operatorTakeoverAwaitingResolution = false
         showingOperatorInput = false
+        isCollectingMeasurementSamples = false
 
         guard candidate != nil,
               targets.count == totalTrialCount,
@@ -454,7 +498,7 @@ final class EyeTestViewModel: ObservableObject {
     }
 
     func submitOperatorResponses(
-        _ responses: [OptotypeDirection],
+        _ responses: [OptotypeResponse],
         dependencies: AppDependencies,
         session: AppSession
     ) async {
@@ -465,7 +509,7 @@ final class EyeTestViewModel: ObservableObject {
         // before operator data is allowed to mutate the threshold engine.
         invalidateActiveVoiceFlow(using: dependencies)
         guard responses.count == totalTrialCount else {
-            phase = .retry("Operator input must contain exactly seven directions.")
+            phase = .retry("Operator input must contain exactly seven responses.")
             return
         }
         guard targets.count == totalTrialCount else {
@@ -474,13 +518,15 @@ final class EyeTestViewModel: ObservableObject {
             return
         }
         isRunningBlock = true
+        let generation = voiceFlowGeneration
         await submit(
-            responses: responses.map(OptotypeResponse.init),
+            responses: responses,
             source: .operatorInput,
             transcript: nil,
             audioLevelAdequate: true,
             dependencies: dependencies,
-            session: session
+            session: session,
+            generation: generation
         )
     }
 
@@ -490,6 +536,7 @@ final class EyeTestViewModel: ObservableObject {
             needsPositionRecheck = false
             positioningAccepted = false
             lockedPresentationDistance = nil
+            presentedGeometry = nil
             resetSequentialPresentation()
             phase = .guiding
             announceGuidance(using: dependencies)
@@ -524,10 +571,14 @@ final class EyeTestViewModel: ObservableObject {
         // The eventual whole-block quality gate rejects real position drift.
         isCollectingMeasurementSamples = false
         phase = .presenting
-        await dependencies.spokenPrompts.speakAndWait(
+        guard await dependencies.spokenPrompts.speakForTransition(
             "Same circle. Say a direction, or say I can't see it."
-        )
-        guard voiceFlowIsCurrent(generation) else { return }
+        ) == .finished, voiceFlowIsCurrent(generation) else {
+            if voiceFlowIsCurrent(generation) {
+                phase = .retry("The voice guide paused. Repeat this circle or use operator input.")
+            }
+            return
+        }
         await collectSequentialAnswers(
             dependencies: dependencies,
             session: session,
@@ -541,7 +592,8 @@ final class EyeTestViewModel: ObservableObject {
         transcript: String?,
         audioLevelAdequate: Bool,
         dependencies: AppDependencies,
-        session: AppSession
+        session: AppSession,
+        generation: UUID
     ) async {
         guard let candidate,
               let profile = session.activeSession.deviceProfile,
@@ -564,16 +616,21 @@ final class EyeTestViewModel: ObservableObject {
             return
         }
         phase = .scoring
-        let geometry = OptotypeGeometry.calculate(
-            distanceMetres: actualDistance,
-            pixelsPerInch: profile.pixelsPerInch,
-            displayScale: profile.displayScale
-        )
+        let frozenPresentation = presentedGeometry
+        let renderedDistance = frozenPresentation?.presentationDistanceMetres
+            ?? lockedPresentationDistance ?? candidate.distanceMetres
+        let geometry = frozenPresentation?.geometry
+        let actualAngularSize = frozenPresentation?.computedArcMinutes(at: actualDistance)
+        let geometryDrift = geometry.flatMap { computed -> Double? in
+            guard let actualAngularSize, computed.effectiveArcMinutes > 0 else { return nil }
+            return abs(actualAngularSize - computed.effectiveArcMinutes) / computed.effectiveArcMinutes
+        }
+        let geometryValid = geometry != nil && geometryDrift.map { $0 <= 0.10 } == true
         let quality = blockQuality(
             aggregate: aggregate,
             responseCount: responses.count,
             audioLevelAdequate: audioLevelAdequate,
-            targetGeometryValid: geometry != nil
+            targetGeometryValid: geometryValid
         )
         let correct = zip(targets, responses).reduce(into: 0) { count, pair in
             if pair.1.matches(pair.0) { count += 1 }
@@ -593,7 +650,14 @@ final class EyeTestViewModel: ObservableObject {
             outcome: outcome,
             quality: quality,
             responseSource: source,
-            transcript: transcript
+            transcript: transcript,
+            presentationDistanceMetres: renderedDistance,
+            renderedPixelHeight: geometry?.pixelHeight,
+            renderedPointHeight: geometry?.pointHeight,
+            renderedAngularSizeArcMinutes: geometry?.effectiveArcMinutes,
+            actualAngularSizeArcMinutes: actualAngularSize,
+            geometryDistanceDriftFraction: geometryDrift,
+            presentedGeometry: frozenPresentation
         )
 
         if eye == .right {
@@ -611,6 +675,11 @@ final class EyeTestViewModel: ObservableObject {
             if quality.isValid {
                 positioningAccepted = false
                 lockedPresentationDistance = nil
+                presentedGeometry = nil
+                dependencies.sensorCoordinator.setSimulatorTargetDistance(
+                    targetDistance,
+                    owner: simulatorDistanceOwner
+                )
                 announceGuidance(using: dependencies)
             } else {
                 // Do not restart movement speech behind the retry screen. The
@@ -618,10 +687,25 @@ final class EyeTestViewModel: ObservableObject {
                 needsPositionRecheck = true
             }
         case .completed(let result):
-            if eye == .right { session.activeSession.rightEyeResult = result }
-            else { session.activeSession.leftEyeResult = result }
+            let safeResult = NumericResultEligibility.sanitize(
+                result,
+                numericResultsAllowed: session.activeSession.numericResultsAllowed == true
+            )
+            if eye == .right { session.activeSession.rightEyeResult = safeResult }
+            else { session.activeSession.leftEyeResult = safeResult }
             phase = .completed
-            await dependencies.spokenPrompts.speakAndWait("\(eye.displayName) eye complete.")
+            let outcome = await dependencies.spokenPrompts.speakForTransition(
+                "\(eye.displayName) eye target task finished."
+            )
+            let expectedRoute: AppRoute = eye == .right ? .rightEyeTest : .leftEyeTest
+            guard CompletionNavigationPolicy.shouldAdvance(
+                after: outcome,
+                expectedRoute: expectedRoute,
+                currentRoute: session.path.last,
+                expectedGeneration: generation,
+                currentGeneration: voiceFlowGeneration,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
             session.navigate(to: eye == .right ? .rightGaborTest : .leftGaborTest)
         }
     }
@@ -630,6 +714,9 @@ final class EyeTestViewModel: ObservableObject {
         positioningAccepted = false
         needsPositionRecheck = false
         lockedPresentationDistance = nil
+        presentedGeometry = nil
+        distanceFilter.reset()
+        currentDistance = nil
         targetTracker.reset()
         readyProgress = 0
         isInTargetZone = false
@@ -655,6 +742,7 @@ final class EyeTestViewModel: ObservableObject {
         guard let sample, sample.faceCount == 1 else { return .findFace }
         if !sample.phoneStable { return .waitForPhone }
         if sample.luminance < 0.12 { return .addLight }
+        if gazeState != .aligned { return .lookAtCentre }
         if abs(sample.headYawDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
             || abs(sample.headPitchDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees {
             return .facePhone
@@ -668,6 +756,7 @@ final class EyeTestViewModel: ObservableObject {
               sample.faceCount == 1,
               sample.phoneStable,
               sample.luminance >= 0.12,
+              gazeState == .aligned,
               abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees,
               abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees else {
             return false
@@ -738,10 +827,35 @@ final class EyeTestViewModel: ObservableObject {
         blockLaunchPending = false
     }
 
+    func sensorStreamInvalidated(using dependencies: AppDependencies) {
+        invalidateActiveVoiceFlow(using: dependencies)
+        resetSequentialPresentation()
+        blockSamples.removeAll(keepingCapacity: false)
+        mostRecentSample = nil
+        currentDistance = nil
+        positioningAccepted = false
+        needsPositionRecheck = false
+        lockedPresentationDistance = nil
+        presentedGeometry = nil
+        distanceFilter.reset()
+        targetTracker.reset()
+        gazeTracker.reset()
+        gazeState = .unavailable
+        phase = .guiding
+        announceGuidance(using: dependencies)
+    }
+
+    func cancel(using dependencies: AppDependencies) {
+        invalidateActiveVoiceFlow(using: dependencies)
+        dependencies.sensorCoordinator.releaseSimulatorDistanceOwner(simulatorDistanceOwner)
+        simulatorDistanceOwner = nil
+    }
+
     private func qualityMessage(_ quality: BlockQuality) -> String {
         guard let first = quality.discardReasons.first else { return "This row could not be scored. Please repeat it." }
         switch first {
         case .trackingCoverage, .multipleFaces: return "Face tracking was incomplete. Centre one face and repeat."
+        case .gazeUnavailable, .gazeOffCentre: return "Look at the centre of the screen and repeat."
         case .phoneMoved, .orientationChanged: return "The phone moved. Re-lock its position and repeat."
         case .headPose: return "Face the phone directly and repeat."
         case .distanceUnstable: return "Hold still for one second and repeat."
@@ -774,6 +888,7 @@ final class EyeTestViewModel: ObservableObject {
             }),
             audioLevelAdequate: audioLevelAdequate,
             targetGeometryValid: targetGeometryValid,
+            gazeCoverage: aggregate.gazeAlignedCoverage,
             discardReasons: reasons
         )
     }

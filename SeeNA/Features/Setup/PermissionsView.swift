@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct PermissionsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var session: AppSession
     @State private var model: PermissionsViewModel
 
@@ -10,8 +11,8 @@ struct PermissionsView: View {
 
     var body: some View {
         ActionScaffold(
-            title: "Camera and voice",
-            subtitle: "Tap Allow twice. Then SeeNA can guide the screening without more tapping.",
+            title: "Camera and responses",
+            subtitle: "Camera is required for the sensor task. Microphone is optional; operator input remains available.",
             primaryTitle: model.primaryTitle,
             primarySystemImage: model.primarySystemImage,
             primaryEnabled: !model.isRequesting,
@@ -36,22 +37,35 @@ struct PermissionsView: View {
             .animation(.snappy(duration: 0.34), value: model.cameraGranted)
             .animation(.snappy(duration: 0.34), value: model.microphoneGranted)
 
-            Label("Natural AI-generated female guide", systemImage: "speaker.wave.2.fill")
+            Label(model.guideDescription, systemImage: "speaker.wave.2.fill")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(SEENATheme.secondaryInk)
                 .padding(.horizontal, 4)
 
             if model.requestCompleted && (!model.cameraGranted || !model.microphoneGranted) {
-                Label("Both permissions are needed. Tap Try again, or enable them in Settings.", systemImage: "exclamationmark.circle")
+                Label(model.cameraGranted
+                      ? "Microphone is off. Continue using the visible operator response controls, or enable voice in Settings."
+                      : "Camera is required. Enable it in Settings, then return here.", systemImage: "exclamationmark.circle")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(SEENATheme.secondaryInk)
                     .padding(.horizontal, 4)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                if model.isPermanentlyDenied {
+                    Button("Open Settings", action: model.openSettings)
+                        .buttonStyle(PrimaryActionStyle())
+                        .accessibilityHint("Opens iPhone Settings so camera and microphone access can be enabled")
+                }
             }
         }
         .task { await model.begin(session: session) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.refreshAuthorizationState() }
+        }
+        .onDisappear(perform: model.cancel)
         .navigationTitle("Permissions")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
     }
 }
 

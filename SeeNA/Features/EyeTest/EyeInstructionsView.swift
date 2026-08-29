@@ -20,9 +20,24 @@ private final class EyeReadyViewModel {
 
     private func listenForReady(eye: Eye, session: AppSession, dependencies: AppDependencies) async {
         phase = .speaking
-        await dependencies.spokenPrompts.speakAndWait(
+#if DEBUG
+        if dependencies.sensorCoordinator.isSimulatorVoiceAutomationEnabled {
+            phase = .waiting
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled,
+                  session.path.last == (eye == .right ? .rightEyeInstructions : .leftEyeInstructions) else { return }
+            continueNow(eye: eye, session: session)
+            return
+        }
+#endif
+        _ = await dependencies.spokenPrompts.speakForTransition(
             "Cover your \(eye.eyeToCover) eye without pressing. Say yes when ready."
         )
+        guard session.path.last == (eye == .right ? .rightEyeInstructions : .leftEyeInstructions) else { return }
+        guard session.responseMode == .voicePreferred, dependencies.network.isConnected else {
+            phase = .waiting
+            return
+        }
         do {
             phase = .listening
             let recording = try await dependencies.audioRecorder.record(maximumDuration: 8)
@@ -37,14 +52,26 @@ private final class EyeReadyViewModel {
                 continueNow(eye: eye, session: session)
             } else {
                 phase = .waiting
-                await dependencies.spokenPrompts.speakAndWait("Take your time. Say yes when you are ready.")
+                _ = await dependencies.spokenPrompts.speakForTransition(
+                    "Take your time. Say yes when you are ready."
+                )
+                guard !Task.isCancelled,
+                      session.path.last == (eye == .right ? .rightEyeInstructions : .leftEyeInstructions) else { return }
                 hasStarted = false
                 await begin(eye: eye, session: session, dependencies: dependencies)
             }
+        } catch is CancellationError {
+            return
         } catch {
             phase = .waiting
             dependencies.spokenPrompts.speak("I couldn’t hear you. Say yes again, or use the ready button.")
         }
+    }
+
+    func cancel(dependencies: AppDependencies) {
+        hasStarted = false
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
     }
 }
 
@@ -76,5 +103,6 @@ struct EyeInstructionsView: View {
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden()
         .task { await model.begin(eye: eye, session: session, dependencies: dependencies) }
+        .onDisappear { model.cancel(dependencies: dependencies) }
     }
 }

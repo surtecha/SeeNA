@@ -64,42 +64,57 @@ describe("strict contracts", () => {
     });
   });
 
-  it("accepts only finite deterministic result facts", () => {
+  it("accepts only allow-listed qualitative result codes", () => {
     expect(explanationRequestSchema.safeParse({
       locale: "en-AU",
       rightEye: {
         status: "validEstimate",
-        quality: "good",
-        displayedEstimateDiopter: -2,
-        thresholdDistanceMetres: 0.5,
-        lastFailDiopter: -2.25,
-        firstPassDiopter: -2,
-        sensorUncertaintyDiopter: 0.12,
-        repeatabilityDiopter: 0.25
+        quality: "good"
       },
-      comparison: "Right and left eye results differ.",
+      comparisonCode: "eyes_noticeably_different",
       actionCode: "professional_exam_recommended",
       limitations: ["not_a_prescription"],
-      localMathConsistent: true
+      localIntegrityCode: "consistent"
+    }).success).toBe(true);
+    expect(explanationRequestSchema.safeParse({
+      locale: "en-AU",
+      rightEye: { status: "experimentalAdverseBoundary", quality: "good" },
+      comparisonCode: "review_eyes_separately",
+      actionCode: "professional_exam_recommended",
+      limitations: ["not_a_prescription"],
+      localIntegrityCode: "consistent"
     }).success).toBe(true);
   });
 
-  it("rejects extra, non-finite, or incomplete result facts", () => {
+  it("uses neutral numeric-not-applicable verification for nonnumeric fallback", () => {
+    const input = explanationRequestSchema.parse({
+      locale: "en-AU",
+      rightEye: { status: "experimentalFarthestTargetPassed", quality: "good" },
+      leftEye: { status: "experimentalFarthestTargetPassed", quality: "good" },
+      comparisonCode: "review_eyes_separately",
+      actionCode: "routine_exam_recommended",
+      limitations: ["not_a_prescription"],
+      localIntegrityCode: "consistent"
+    });
+    expect(fallbackExplanation(input).verification).toBe("notApplicable");
+  });
+
+  it("rejects free-form or numeric result facts at the request boundary", () => {
     expect(explanationRequestSchema.safeParse({
       locale: "en-AU",
       rightEye: { status: "validEstimate", quality: "good", displayedEstimate: -2 },
-      comparison: "Right and left eye results differ.",
+      comparisonCode: "eyes_noticeably_different",
       actionCode: "professional_exam_recommended",
       limitations: ["not_a_prescription"],
-      localMathConsistent: true
+      localIntegrityCode: "consistent"
     }).success).toBe(false);
     expect(explanationRequestSchema.safeParse({
       locale: "en-AU",
-      comparison: "",
+      comparison: "Right and left eye results differ.",
       actionCode: "no_reliable_result",
       limitations: ["not_a_prescription"],
-      localMathConsistent: true,
-      rightEye: { status: "validEstimate", quality: "good", displayedEstimateDiopter: Infinity }
+      localIntegrityCode: "consistent",
+      rightEye: { status: "validEstimate", quality: "good", displayedEstimateDiopter: -2 }
     }).success).toBe(false);
   });
 
@@ -107,13 +122,13 @@ describe("strict contracts", () => {
     const input = explanationRequestSchema.parse({
       locale: "en-AU",
       rightEye: { status: "unreliableMeasurement", quality: "poor" },
-      comparison: "",
+      comparisonCode: "repeat_needed",
       actionCode: "no_reliable_result",
       limitations: ["not_a_prescription"],
-      localMathConsistent: false
+      localIntegrityCode: "review_required"
     });
     const fallback = explanationResponseSchema.parse(fallbackExplanation(input));
-    expect(fallback.headline).toContain("could not");
+    expect(fallback.headline).toContain("another attempt");
     expect(fallback.verification).toBe("reviewRequired");
   });
 

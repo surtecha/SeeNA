@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct BaselineCalibrationView: View {
@@ -37,6 +38,11 @@ struct BaselineCalibrationView: View {
                     symbol: "person.crop.circle",
                     ready: model.headReady
                 )
+                CalibrationPill(
+                    title: model.gazeState == .aligned ? "LOOKING CENTRE" : "LOOK AT CENTRE",
+                    symbol: "eye",
+                    ready: model.gazeState == .aligned
+                )
             }
 
             ProgressLine(title: model.instruction, value: model.proximityProgress)
@@ -47,7 +53,11 @@ struct BaselineCalibrationView: View {
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
             model.observe(sample, session: session)
         }
-        .navigationTitle("Calibration")
+        .onReceive(dependencies.sensorCoordinator.$streamEpoch.dropFirst()) { _ in
+            model.sensorStreamInvalidated()
+        }
+        .onDisappear(perform: model.cancel)
+        .navigationTitle("Distance setup")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -103,7 +113,7 @@ private struct CalibrationStage: View {
         .frame(maxWidth: .infinity)
         .background(Color.black, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Forty centimetre calibration")
+        .accessibilityLabel("Forty centimetre distance setup")
         .accessibilityValue("\(model.distanceLabel). \(model.instruction)")
     }
 }

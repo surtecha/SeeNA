@@ -34,7 +34,7 @@ struct DeviceCalibrationHarnessView: View {
                     .buttonStyle(PrimaryActionStyle())
                     .disabled(isCollecting)
                 } else {
-                    Button("Fit, verify and enable this profile") { finish() }
+                    Button("Save distance-only calibration") { finish() }
                         .buttonStyle(PrimaryActionStyle())
                 }
 
@@ -44,7 +44,7 @@ struct DeviceCalibrationHarnessView: View {
                         .foregroundColor(SEENATheme.secondaryInk)
                 }
 
-                Text("Acceptance: median error ≤3 cm below 1 m and ≤5% at/above 1 m, with 150 samples at all eight distances. A failed fit is never enabled.")
+                Text("Distance-fit acceptance: median error ≤3 cm below 1 m and ≤5% at/above 1 m, with 150 samples at all eight distances. This tool cannot validate display rasterisation or clinical performance, so numeric output remains locked.")
                     .font(.footnote)
                     .foregroundColor(SEENATheme.secondaryInk)
             }
@@ -101,7 +101,7 @@ struct DeviceCalibrationHarnessView: View {
         let above = observations.filter { $0.groundTruthMetres >= 1 }
         let belowError = maximumMedianAbsoluteError(below, fit: fit)
         let abovePercentage = maximumMedianPercentageError(above, fit: fit)
-        let validated = DeviceProfile(
+        let distanceCalibrated = DeviceProfile(
             schemaVersion: candidate.schemaVersion,
             profileVersion: candidate.profileVersion + 1,
             hardwareIdentifiers: candidate.hardwareIdentifiers,
@@ -126,16 +126,18 @@ struct DeviceCalibrationHarnessView: View {
                 maximumMedianErrorBelowOneMetre: belowError,
                 maximumMedianPercentageErrorAtOrAboveOneMetre: abovePercentage,
                 validatedAt: Date(),
-                notes: "Created on-device from eight tape-measured distances; 150 valid samples per distance."
+                notes: "Distance-only evidence from eight tape-measured distances; 150 valid samples per distance. This does not validate display rasterisation or clinical performance."
             ),
-            isValidated: true
+            displayRasterValidation: nil,
+            clinicalValidationEvidence: nil,
+            isValidated: false
         )
 
         do {
-            try dependencies.profileRegistry.persistValidatedProfile(validated)
-            resultMessage = String(format: "Enabled. Fit %.5fx %+.5f m; near median error %.3f m; far median error %.2f%%.", fit.scale, fit.offsetMetres, belowError, abovePercentage * 100)
+            try dependencies.profileRegistry.persistDistanceCalibratedProfile(distanceCalibrated)
+            resultMessage = String(format: "Distance fit saved: %.5fx %+.5f m; near median error %.3f m; far median error %.2f%%. Numeric output remains locked until independent display and clinical validation exist.", fit.scale, fit.offsetMetres, belowError, abovePercentage * 100)
         } catch {
-            resultMessage = "The validated profile could not be saved."
+            resultMessage = "The distance-only calibration could not be saved. Numeric output remains locked."
         }
     }
 

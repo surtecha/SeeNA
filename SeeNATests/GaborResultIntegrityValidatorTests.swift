@@ -6,7 +6,9 @@ final class GaborResultIntegrityValidatorTests: XCTestCase {
         let trials = [
             trial(contrast: 0.40, outcome: .pass),
             trial(contrast: 0.25, outcome: .pass),
-            trial(contrast: 0.16, outcome: .fail)
+            trial(contrast: 0.16, outcome: .pass),
+            trial(contrast: 0.10, outcome: .pass),
+            trial(contrast: 0.06, outcome: .pass)
         ]
         let result = GaborScreeningResult(
             eye: .right,

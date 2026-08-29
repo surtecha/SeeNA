@@ -259,6 +259,94 @@ final class ResultIntegrityValidatorTests: XCTestCase {
         XCTAssertEqual(validation.issues, [.malformedSupportingEvidence, .missingSupportingEvidence])
     }
 
+    func testTrialAwareQualitativeBoundariesRequireMatchingWitnesses() {
+        let farthest = NumericResultEligibility.sanitize(
+            result(
+                status: .noMyopiaDetectedWithinRange,
+                lastFail: nil,
+                firstPass: -0.5,
+                displayed: nil,
+                distance: 1.98,
+                uncertainty: 0.01,
+                repeatability: 0
+            ),
+            numericResultsAllowed: false
+        )
+        let adverse = NumericResultEligibility.sanitize(
+            result(
+                status: .strongerThanSupportedRange,
+                lastFail: -2.5,
+                firstPass: nil,
+                displayed: nil,
+                distance: 0.4,
+                uncertainty: 0.01,
+                repeatability: 0
+            ),
+            numericResultsAllowed: false
+        )
+
+        XCTAssertTrue(
+            ResultIntegrityValidator.validate(
+                farthest,
+                against: [
+                    trial(candidate: -0.5, distance: 1.99, outcome: .pass),
+                    trial(candidate: -0.5, distance: 1.98, outcome: .pass)
+                ]
+            ).isValid
+        )
+        XCTAssertTrue(
+            ResultIntegrityValidator.validate(
+                adverse,
+                against: [
+                    trial(candidate: -2.5, distance: 0.40, outcome: .fail),
+                    trial(candidate: -2.5, distance: 0.405, outcome: .fail)
+                ]
+            ).isValid
+        )
+        XCTAssertEqual(
+            ResultIntegrityValidator.validate(farthest, against: []).issues,
+            [.missingSupportingEvidence]
+        )
+        XCTAssertEqual(
+            ResultIntegrityValidator.validate(adverse, against: []).issues,
+            [.missingSupportingEvidence]
+        )
+    }
+
+    func testTrialAwareQualitativeThresholdRequiresTwoPassesAndAdjacentFail() {
+        let qualitative = NumericResultEligibility.sanitize(
+            result(
+                status: .validEstimate,
+                lastFail: -2.0,
+                firstPass: -2.25,
+                displayed: -2.25,
+                distance: 0.44,
+                uncertainty: 0.02,
+                repeatability: 0.01
+            ),
+            numericResultsAllowed: false
+        )
+
+        let valid = ResultIntegrityValidator.validate(
+            qualitative,
+            against: [
+                trial(candidate: -2.0, distance: 0.50, outcome: .fail),
+                trial(candidate: -2.25, distance: 0.445, outcome: .pass),
+                trial(candidate: -2.25, distance: 0.44, outcome: .pass)
+            ]
+        )
+        let missingConfirmation = ResultIntegrityValidator.validate(
+            qualitative,
+            against: [
+                trial(candidate: -2.0, distance: 0.50, outcome: .fail),
+                trial(candidate: -2.25, distance: 0.44, outcome: .pass)
+            ]
+        )
+
+        XCTAssertTrue(valid.isValid)
+        XCTAssertEqual(missingConfirmation.issues, [.missingSupportingEvidence])
+    }
+
     private func result(
         status: ScreeningStatus,
         lastFail: Double?,

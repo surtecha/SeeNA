@@ -29,11 +29,11 @@ screening facts -> /api/explain-result -> gpt-5.6-luna explanation JSON
                                     -> independent consistency JSON
 ```
 
-The model receives a read-only copy of deterministic screening facts for explanation and consistency checking. It cannot return a measurement field, and the backend rejects explanation text containing numbers or measurement units. The app renders every number directly from validated local state and falls back to local wording unless the independent pass returns `consistent`.
+Explanation requests contain allow-listed qualitative codes only: no distances, diopters, uncertainty, repeatability or target measurements cross that boundary. The model cannot return a measurement field, and the backend rejects explanation text containing numbers or measurement units. If a future exact-device calibration unlocks numeric output, narration and rendering stay local/on-device. The app falls back to deterministic local wording unless the independent pass returns `consistent`.
 
 ## iOS state and dependencies
 
-`AppSession` owns route history, the active `ScreeningSession`, sensor presentation state and cached explanation. Feature-local view models own onboarding interaction, permission orchestration, phone/gaze readiness, baseline calibration, the Landolt threshold search and the Gabor orientation task. Views render those models and forward user intent; service side effects stay in the models. `AppDependencies` constructs the profile registry, protected session store, sensor coordinator, recorder, female spoken-prompt service, backend client and brightness restorer.
+`AppSession` owns route history, the active `ScreeningSession`, sensor presentation state and cached explanation. Feature-local view models own onboarding interaction, permission orchestration, device checks, phone/gaze readiness, baseline calibration, processing/save decisions, the Landolt threshold search and the non-clinical Gabor orientation task. Views render those models and forward user intent; service side effects stay in the models. `AppDependencies` constructs the profile registry, protected session store, sensor coordinator, recorder, female spoken-prompt service, backend client and brightness restorer.
 
 There are no global service singletons and no networking calls inside a SwiftUI `body`.
 
@@ -47,7 +47,9 @@ An exact-device affine fit applies:
 corrected distance = scale * fused distance + offset
 ```
 
-No bundled profile is marked validated. A locally persisted profile requires 150 valid samples at each of 0.40, 0.50, 0.67, 0.80, 1.00, 1.33, 1.50 and 2.00 metres and must pass the acceptance rules in `VALIDATION.md`.
+No bundled profile is marked validated; every bundled `sampleCount` is zero. A locally persisted profile requires 150 valid samples at each of 0.40, 0.50, 0.67, 0.80, 1.00, 1.33, 1.50 and 2.00 metres and must pass the acceptance rules in `VALIDATION.md`. Numeric generation also requires second-person detection. Until every gate passes, completed rows are reduced to nonnumeric experimental task performance and cannot rule out myopia.
+
+Missing gaze data is unavailable, never centred. Setup, calibration, countdown and each scored block use one shared hysteretic gaze-readiness policy and a minimum coverage gate. The current POC angles and coverage limits are conservative provisional settings; they have not been clinically validated.
 
 ## Optotype and search
 
@@ -65,7 +67,9 @@ The search starts at the closest supported point and moves outward through −2.
 ## Backend security
 
 - OpenAI key exists only in server environment variables.
-- Requests require `POST`, a timing-safe app-token comparison and a best-effort per-instance rate limit.
+- Requests require `POST`, a timing-safe prototype app-token comparison, endpoint-specific request/cost limits and bounded request sizes.
+- The static mobile app token is extractable and is not authentication, App Attest or a short-lived session. This remains a documented POC risk.
+- When configured, a shared REST key-value counter enforces a durable daily cost-unit ceiling and fails closed if that quota service is unavailable. Provider spend alerts and real attestation/session issuance remain deployment work.
 - Audio MIME, count and 5 MB size are bounded; temporary files are removed in `finally`.
 - Text inputs and outputs use strict Zod schemas.
 - Responses API calls set `store: false`, `tools: []` and strict JSON Schema.

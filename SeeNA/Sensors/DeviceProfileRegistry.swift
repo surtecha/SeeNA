@@ -31,6 +31,11 @@ final class DeviceProfileRegistry {
         return profiles.first { $0.hardwareIdentifiers.contains(identifier) }
     }
 
+    func isExactRuntimeProfile(_ profile: DeviceProfile) -> Bool {
+        guard let current = self.profile(), current.id == profile.id else { return false }
+        return screenMatches(profile)
+    }
+
     func capabilityTier(allowMockSensors: Bool = false) -> DeviceCapabilityTier {
         guard UIDevice.current.userInterfaceIdiom == .phone else {
             return .unsupported(reason: .nonIPhone)
@@ -68,6 +73,25 @@ final class DeviceProfileRegistry {
     func persistValidatedProfile(_ profile: DeviceProfile) throws {
         guard profile.isValidated,
               profile.validationEvidence.sampleCount >= 1_200,
+              profile.displayRasterValidation != nil,
+              profile.clinicalValidationEvidence != nil,
+              profile.minimumValidatedDistance <= 0.40,
+              profile.maximumValidatedDistance >= 2.00 else {
+            throw RegistryError.insufficientValidation
+        }
+        let data = try JSONEncoder().encode(profile)
+        UserDefaults.standard.set(data, forKey: localProfileKey)
+        replaceProfile(profile)
+    }
+
+    /// Saves only the distance fit produced by the in-app tape harness. It is
+    /// deliberately incapable of marking the display or protocol clinically
+    /// validated, so `NumericResultEligibility` remains locked.
+    func persistDistanceCalibratedProfile(_ profile: DeviceProfile) throws {
+        guard !profile.isValidated,
+              profile.validationEvidence.sampleCount >= 1_200,
+              profile.displayRasterValidation == nil,
+              profile.clinicalValidationEvidence == nil,
               profile.minimumValidatedDistance <= 0.40,
               profile.maximumValidatedDistance >= 2.00 else {
             throw RegistryError.insufficientValidation

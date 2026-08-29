@@ -3,6 +3,7 @@ import SwiftUI
 struct WelcomeView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var dependencies: AppDependencies
 
     var body: some View {
         GeometryReader { proxy in
@@ -51,6 +52,11 @@ struct WelcomeView: View {
                     .foregroundStyle(SEENATheme.secondaryInk)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Button("Previous sessions") { session.navigate(to: .history) }
+                    .font(.body.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Shows saved sessions and privacy controls")
             }
             .padding(.horizontal, 24)
             .padding(.top, 12)
@@ -62,6 +68,7 @@ struct WelcomeView: View {
 
     private func begin() {
         guard session.path.isEmpty else { return }
+        dependencies.resetForNewScreening()
         HapticFeedback.impact(.medium)
         session.beginJourney()
     }
@@ -88,7 +95,7 @@ private struct TestBadgeGroup: View {
     @ViewBuilder
     private var badges: some View {
         TestBadge(symbol: "circle.dotted", label: "Landolt C")
-        TestBadge(symbol: "circle.grid.cross", label: "Gabor")
+        TestBadge(symbol: "circle.grid.cross", label: "Gabor pattern task")
     }
 }
 

@@ -3,152 +3,158 @@ import SwiftUI
 
 @MainActor
 @Observable
-private final class VoiceSafetyViewModel {
-    enum Phase: Equatable {
-        case speaking
-        case listening
-        case checking
-        case retry
-        case finished
-    }
+private final class SafetyEligibilityViewModel {
+    enum Phase: Equatable { case question, selectReason, finished }
 
-    private(set) var phase: Phase = .speaking
+    private(set) var phase: Phase = .question
     private var hasBegun = false
 
-    var status: String {
-        switch phase {
-        case .speaking: return "Listen"
-        case .listening: return "Say yes or no"
-        case .checking: return "Checking"
-        case .retry: return "I didn’t catch that"
-        case .finished: return "Ready"
-        }
-    }
-
-    func begin(session: AppSession, dependencies: AppDependencies) async {
+    func begin(dependencies: AppDependencies) async {
         guard !hasBegun else { return }
         hasBegun = true
-        await ask(session: session, dependencies: dependencies)
-    }
-
-    func ask(session: AppSession, dependencies: AppDependencies) async {
-        phase = .speaking
-        await dependencies.spokenPrompts.speakAndWait(
-            "Remove glasses. Say no if you wear contacts, have sudden pain or vision change, are under eighteen, or cannot walk safely. Otherwise, say yes."
+        _ = await dependencies.spokenPrompts.speakAndWait(
+            "Safety check. Read the exclusions on screen. Tap No, none apply to continue, or Yes, one applies to stop."
         )
-
-        do {
-            phase = .listening
-            let recording = try await dependencies.audioRecorder.record(maximumDuration: 7)
-            defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
-            guard recording.adequateLevel else {
-                await retry(session: session, dependencies: dependencies)
-                return
-            }
-            phase = .checking
-            let response = try await dependencies.backend.transcribe(
-                audioURL: recording.fileURL,
-                mode: .constrainedChoice,
-                choiceSetID: "readAloud"
-            )
-            guard response.valid, let choice = response.choice else {
-                await retry(session: session, dependencies: dependencies)
-                return
-            }
-            answer(choice == "yes", session: session, dependencies: dependencies)
-        } catch {
-            phase = .retry
-            dependencies.spokenPrompts.speak("I couldn’t hear an answer. You can say it again, or use the two large buttons.")
-        }
     }
 
-    func answer(_ canContinue: Bool, session: AppSession, dependencies: AppDependencies) {
-        guard phase != .finished else { return }
-        phase = .finished
+    func answer(hasExclusion: Bool, session: AppSession, dependencies: AppDependencies) {
+        guard phase == .question else { return }
+        dependencies.spokenPrompts.stop()
         HapticFeedback.impact()
-        if canContinue {
-            session.navigate(to: .deviceCheck)
+        if hasExclusion {
+            phase = .selectReason
+            dependencies.spokenPrompts.speak("Choose the reason that applies so I can show the right safety guidance.")
         } else {
-            dependencies.spokenPrompts.speak("That’s okay. This screening should not continue.")
-            session.navigate(to: .safetyStop)
+            phase = .finished
+            session.navigate(to: .permissions)
         }
     }
 
-    private func retry(session: AppSession, dependencies: AppDependencies) async {
-        phase = .retry
-        await dependencies.spokenPrompts.speakAndWait("I didn’t catch that. Say yes to continue, or no to stop.")
+    func stop(for reason: SafetyStopReason, session: AppSession, dependencies: AppDependencies) {
+        guard phase == .selectReason else { return }
+        phase = .finished
+        session.safetyStopReason = reason
+        dependencies.spokenPrompts.stop()
+        session.navigate(to: .safetyStop)
+    }
+
+    func backToQuestion() { phase = .question }
+
+    func cancel(dependencies: AppDependencies) {
         hasBegun = false
-        await begin(session: session, dependencies: dependencies)
+        dependencies.spokenPrompts.stop()
     }
 }
 
 struct EligibilityView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
-    @State private var model = VoiceSafetyViewModel()
+    @State private var model = SafetyEligibilityViewModel()
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: "shield.checkered")
-                .font(.system(size: 62, weight: .light))
-            Text("One safety check")
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
-            Text("Listen, then say yes or no.")
-                .font(.body.weight(.medium))
-                .foregroundStyle(SEENATheme.secondaryInk)
-            VoiceStatusPill(isListening: model.phase == .listening)
-            Text(model.status)
-                .font(.headline)
-                .contentTransition(.opacity)
-            Spacer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Image(systemName: "shield.checkered")
+                    .font(.system(size: 58, weight: .light))
+                    .frame(maxWidth: .infinity)
+                Text(model.phase == .selectReason ? "Which reason applies?" : "Safety check first")
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .accessibilityAddTraits(.isHeader)
 
-            if model.phase == .retry {
-                Button("Ask me again") {
-                    Task { await model.ask(session: session, dependencies: dependencies) }
+                if model.phase == .selectReason {
+                    reasonChoices
+                } else {
+                    Text("Do not continue if any item below applies today.")
+                        .font(.title3.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(SafetyStopReason.allCases.filter { $0 != .other }) { reason in
+                            Label(reason.title, systemImage: "exclamationmark.circle")
+                                .font(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(SEENATheme.card, in: RoundedRectangle(cornerRadius: 16))
+
+                    Text("Remove glasses for the task. This check happens before SeeNA asks for camera or microphone access.")
+                        .font(.body)
+                        .foregroundStyle(SEENATheme.secondaryInk)
+
+                    VStack(spacing: 12) {
+                        Button("No, none apply") {
+                            model.answer(hasExclusion: false, session: session, dependencies: dependencies)
+                        }
+                        .buttonStyle(PrimaryActionStyle())
+                        Button("Yes, one applies") {
+                            model.answer(hasExclusion: true, session: session, dependencies: dependencies)
+                        }
+                        .buttonStyle(SecondaryActionStyle())
+                    }
                 }
-                .buttonStyle(PrimaryActionStyle())
             }
-
-            HStack(spacing: 12) {
-                Button("No, stop") { model.answer(false, session: session, dependencies: dependencies) }
-                    .buttonStyle(SecondaryActionStyle())
-                Button("Yes, continue") { model.answer(true, session: session, dependencies: dependencies) }
-                    .buttonStyle(PrimaryActionStyle())
-            }
+            .padding(24)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
         }
-        .padding(24)
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden()
-        .task { await model.begin(session: session, dependencies: dependencies) }
+        .task { await model.begin(dependencies: dependencies) }
+        .onDisappear { model.cancel(dependencies: dependencies) }
+    }
+
+    private var reasonChoices: some View {
+        VStack(spacing: 12) {
+            ForEach(SafetyStopReason.allCases) { reason in
+                Button(reason.title) {
+                    model.stop(for: reason, session: session, dependencies: dependencies)
+                }
+                .buttonStyle(SecondaryActionStyle())
+                .frame(minHeight: 44)
+            }
+            Button("Back", action: model.backToQuestion)
+                .frame(minHeight: 44)
+        }
     }
 }
 
 struct SafetyStopView: View {
+    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
 
+    private var guidance: String {
+        (session.safetyStopReason ?? .other).urgentGuidance
+    }
+
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
-            Image(systemName: "heart.text.square")
-                .font(.system(size: 60, weight: .light))
-            Text("Please stop here")
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
-            Text("SeeNA is not suitable today. If you have sudden vision change, severe pain, or an eye injury, seek professional care promptly.")
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(SEENATheme.secondaryInk)
-            Spacer()
-            Text("No screening result was created")
-                .font(.caption.weight(.semibold))
+        ScrollView {
+            VStack(spacing: 22) {
+                Image(systemName: "heart.text.square")
+                    .font(.system(size: 60, weight: .light))
+                Text("Please stop here")
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .accessibilityAddTraits(.isHeader)
+                Text(guidance)
+                    .font(.title3)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("No screening result was created. This is not medical advice.")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(SEENATheme.secondaryInk)
+                    .multilineTextAlignment(.center)
+                Button("Return to start") {
+                    dependencies.resetForNewScreening()
+                    session.startNewSession()
+                }
+                .buttonStyle(PrimaryActionStyle())
+            }
+            .padding(24)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
         }
-        .padding(24)
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden()
-        .task {
-            await dependencies.spokenPrompts.speakAndWait(
-                "Please stop here. SeeNA is not suitable today. For sudden vision change, severe pain, or an eye injury, seek professional care promptly."
-            )
-        }
+        .task { _ = await dependencies.spokenPrompts.speakAndWait(guidance) }
+        .onDisappear { dependencies.spokenPrompts.stop() }
     }
 }

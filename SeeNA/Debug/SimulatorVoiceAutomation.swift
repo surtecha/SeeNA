@@ -35,7 +35,7 @@ enum SimulatorVoiceAutomation {
     /// Keeps a target visible and sensor sampling active long enough for the
     /// normal block-quality minimum while avoiding microphone/network I/O.
     static func waitForAutomatedAnswer() async -> Bool {
-        await wait(milliseconds: 300)
+        await wait(milliseconds: 1_500)
     }
 
     private static func wait(milliseconds: UInt64) async -> Bool {

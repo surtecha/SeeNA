@@ -78,7 +78,7 @@ private struct EyeAnswerAuditSection: View {
                 }
             }
 
-            Text("Gabor patterns")
+            Text("Gabor pattern task")
                 .font(.headline)
                 .foregroundStyle(SEENATheme.secondaryInk)
                 .padding(.top, 4)
@@ -102,7 +102,7 @@ private struct LandoltAnswerBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             AnswerBlockHeader(
                 title: "Block \(blockNumber)",
-                detail: String(format: "%.2f m · %d/%d correct", block.actualMedianDistanceMetres, block.correctCount, block.targets.count)
+                detail: evidenceDetail
             )
 
             Divider()
@@ -130,6 +130,27 @@ private struct LandoltAnswerBlock: View {
         guard block.responses.indices.contains(index) else { return nil }
         return block.responses[index]
     }
+
+    private var evidenceDetail: String {
+        var parts = [
+            String(
+                format: "%.2f m measured · %d/%d correct",
+                block.actualMedianDistanceMetres,
+                block.correctCount,
+                block.targets.count
+            )
+        ]
+        if let rendered = block.renderedAngularSizeArcMinutes,
+           let actual = block.actualAngularSizeArcMinutes,
+           let presentation = block.presentationDistanceMetres {
+            parts.append(String(format: "requested/computed %.1f arcmin at %.2f m", rendered, presentation))
+            parts.append(String(format: "computed at block median approx. %.1f arcmin", actual))
+            if let drift = block.geometryDistanceDriftFraction, drift > 0.10 {
+                parts.append("meaningful distance drift")
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
 }
 
 private struct GaborAnswerBlock: View {
@@ -140,7 +161,7 @@ private struct GaborAnswerBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             AnswerBlockHeader(
                 title: "Block \(blockNumber)",
-                detail: "\(Int((block.contrast * 100).rounded()))% contrast · \(block.correctCount)/\(block.targets.count) correct"
+                detail: "\(block.correctCount)/\(block.targets.count) correct"
             )
 
             Divider()

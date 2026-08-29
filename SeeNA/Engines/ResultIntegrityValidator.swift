@@ -55,6 +55,9 @@ enum ResultIntegrityValidator {
             validateNoMyopiaBoundary(result, issues: &issues)
         case .strongerThanSupportedRange:
             validateStrongBoundary(result, issues: &issues)
+        case .experimentalThresholdObserved, .experimentalFarthestTargetPassed,
+             .experimentalAdverseBoundary, .experimentalTaskCompleted:
+            validateNoMeasurement(result, requireUnavailableQuality: false, issues: &issues)
         case .unreliableMeasurement:
             validateNoMeasurement(result, requireUnavailableQuality: false, issues: &issues)
         case .deviceUnsupported, .userIneligible:
@@ -132,12 +135,67 @@ enum ResultIntegrityValidator {
                 thresholdDistance: distance,
                 issues: &issues
             )
+        case .experimentalFarthestTargetPassed:
+            requireWitnesses(
+                trials,
+                eye: result.eye,
+                candidate: supportedFarthestDiopter,
+                outcome: .pass,
+                minimumCount: 2,
+                thresholdDistance: nil,
+                issues: &issues
+            )
+        case .experimentalAdverseBoundary:
+            requireWitnesses(
+                trials,
+                eye: result.eye,
+                candidate: supportedClosestDiopter,
+                outcome: .fail,
+                minimumCount: 2,
+                thresholdDistance: nil,
+                issues: &issues
+            )
+        case .experimentalThresholdObserved:
+            requireQualitativeThresholdWitnesses(trials, eye: result.eye, issues: &issues)
+        case .experimentalTaskCompleted:
+            requireLegacyExperimentalWitness(trials, eye: result.eye, issues: &issues)
         case .unreliableMeasurement, .deviceUnsupported, .userIneligible:
             break
         }
 
         let orderedIssues = issues.sorted { $0.rawValue < $1.rawValue }
         return ResultIntegrityValidation(isValid: orderedIssues.isEmpty, issues: orderedIssues)
+    }
+
+    private static func requireQualitativeThresholdWitnesses(
+        _ trials: [TrialBlock],
+        eye: Eye,
+        issues: inout Set<ResultIntegrityIssue>
+    ) {
+        let eyeTrials = trials.filter { $0.eye == eye }
+        let valid = eyeTrials.filter(isWellFormedWitness)
+        if eyeTrials.count != valid.count { issues.insert(.malformedSupportingEvidence) }
+
+        let passCandidates = Dictionary(grouping: valid.filter { $0.outcome == .pass }) {
+            $0.candidateDiopter
+        }
+        let hasBracket = passCandidates.contains { pass, witnesses in
+            witnesses.count >= 2 && valid.contains {
+                $0.outcome == .fail && approximatelyEqual($0.candidateDiopter, pass + 0.25)
+            }
+        }
+        if !hasBracket { issues.insert(.missingSupportingEvidence) }
+    }
+
+    private static func requireLegacyExperimentalWitness(
+        _ trials: [TrialBlock],
+        eye: Eye,
+        issues: inout Set<ResultIntegrityIssue>
+    ) {
+        let eyeTrials = trials.filter { $0.eye == eye }
+        let valid = eyeTrials.filter(isWellFormedWitness)
+        if eyeTrials.count != valid.count { issues.insert(.malformedSupportingEvidence) }
+        if valid.isEmpty { issues.insert(.missingSupportingEvidence) }
     }
 
     private static func validateEstimate(
@@ -332,7 +390,8 @@ enum ResultIntegrityValidator {
               block.distanceStandardDeviation.isFinite,
               block.distanceStandardDeviation >= 0,
               block.targets.count == 7,
-              block.responses.count == 7 else {
+              block.responses.count == 7,
+              geometryEvidenceIsWellFormed(block) else {
             return false
         }
         let correctCount = zip(block.targets, block.responses).reduce(into: 0) { count, pair in
@@ -340,6 +399,57 @@ enum ResultIntegrityValidator {
         }
         return block.correctCount == correctCount &&
             block.outcome == TrialScorer.outcome(correctCount: correctCount, hasExactlySevenResponses: true)
+    }
+
+    private static func geometryEvidenceIsWellFormed(_ block: TrialBlock) -> Bool {
+        if let frozen = block.presentedGeometry {
+            guard frozen.presentationDistanceMetres.isFinite,
+                  frozen.presentationDistanceMetres > 0,
+                  frozen.nativeScale.isFinite,
+                  frozen.nativeScale > 0,
+                  frozen.pixelsPerInch.isFinite,
+                  frozen.pixelsPerInch > 0,
+                  frozen.geometry.pixelHeight > 0,
+                  frozen.geometry.pixelHeight.isMultiple(of: 5),
+                  abs(frozen.geometry.pointHeight - Double(frozen.geometry.pixelHeight) / frozen.nativeScale) <= tolerance,
+                  block.presentationDistanceMetres.map({ approximatelyEqual($0, frozen.presentationDistanceMetres) }) == true,
+                  block.renderedPixelHeight == frozen.geometry.pixelHeight,
+                  block.renderedPointHeight.map({ approximatelyEqual($0, frozen.geometry.pointHeight) }) == true,
+                  block.renderedAngularSizeArcMinutes.map({ approximatelyEqual($0, frozen.geometry.effectiveArcMinutes) }) == true else {
+                return false
+            }
+        }
+        let valuesPresent = [
+            block.presentationDistanceMetres != nil,
+            block.renderedPixelHeight != nil,
+            block.renderedPointHeight != nil,
+            block.renderedAngularSizeArcMinutes != nil,
+            block.actualAngularSizeArcMinutes != nil,
+            block.geometryDistanceDriftFraction != nil
+        ]
+        // Legacy sessions did not persist rendered geometry.
+        guard valuesPresent.contains(true) else { return true }
+        guard valuesPresent.allSatisfy({ $0 }),
+              let presentationDistance = block.presentationDistanceMetres,
+              let pixelHeight = block.renderedPixelHeight,
+              let pointHeight = block.renderedPointHeight,
+              let renderedAngle = block.renderedAngularSizeArcMinutes,
+              let actualAngle = block.actualAngularSizeArcMinutes,
+              let drift = block.geometryDistanceDriftFraction,
+              presentationDistance.isFinite,
+              presentationDistance > 0,
+              pixelHeight > 0,
+              pointHeight.isFinite,
+              pointHeight > 0,
+              renderedAngle.isFinite,
+              renderedAngle > 0,
+              actualAngle.isFinite,
+              actualAngle > 0,
+              drift.isFinite,
+              drift >= 0,
+              drift <= 0.10 + tolerance else { return false }
+        let expectedDrift = abs(actualAngle - renderedAngle) / renderedAngle
+        return abs(expectedDrift - drift) <= 0.002
     }
 
     private static func validateProfilePrecision(

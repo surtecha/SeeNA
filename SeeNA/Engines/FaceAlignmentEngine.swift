@@ -39,3 +39,56 @@ enum GazeAlignmentEngine {
         )
     }
 }
+
+enum GazeReadiness: Equatable, Sendable {
+    case unavailable
+    case aligned
+    case offCentre
+}
+
+/// Conservative POC gaze thresholds. These values are provisional and have
+/// not been clinically validated. Hysteresis avoids flicker from normal gaze
+/// noise while missing gaze always fails closed.
+enum GazeReadinessPolicy {
+    static let entryThresholdDegrees = 8.0
+    static let exitThresholdDegrees = 11.0
+    static let minimumBlockCoverage = 0.85
+
+    static func classify(
+        yawErrorDegrees: Double?,
+        pitchErrorDegrees: Double?,
+        thresholdDegrees: Double = entryThresholdDegrees
+    ) -> GazeReadiness {
+        guard let yawErrorDegrees, let pitchErrorDegrees,
+              yawErrorDegrees.isFinite, pitchErrorDegrees.isFinite else {
+            return .unavailable
+        }
+        return abs(yawErrorDegrees) <= thresholdDegrees
+            && abs(pitchErrorDegrees) <= thresholdDegrees
+            ? .aligned
+            : .offCentre
+    }
+}
+
+struct GazeReadinessTracker: Sendable {
+    private var wasAligned = false
+
+    mutating func update(
+        yawErrorDegrees: Double?,
+        pitchErrorDegrees: Double?
+    ) -> GazeReadiness {
+        let state = GazeReadinessPolicy.classify(
+            yawErrorDegrees: yawErrorDegrees,
+            pitchErrorDegrees: pitchErrorDegrees,
+            thresholdDegrees: wasAligned
+                ? GazeReadinessPolicy.exitThresholdDegrees
+                : GazeReadinessPolicy.entryThresholdDegrees
+        )
+        wasAligned = state == .aligned
+        return state
+    }
+
+    mutating func reset() {
+        wasAligned = false
+    }
+}

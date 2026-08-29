@@ -58,7 +58,7 @@ struct LandoltCView: View {
             .interpolation(.none)
             .resizable()
             .frame(width: geometry.pointHeight, height: geometry.pointHeight)
-            .accessibilityLabel("Opening (direction.rawValue)")
+            .accessibilityLabel("Opening \(direction.rawValue)")
     }
 }
 

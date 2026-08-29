@@ -14,13 +14,21 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
     @Published private(set) var level: Float = -80
 
     private var recorder: AVAudioRecorder?
+    private var recordingRequestActive = false
+    private var stopWasRequested = false
 
     func requestPermission() async -> Bool {
         await AVAudioApplication.requestRecordPermission()
     }
 
     func record(maximumDuration: TimeInterval = 12) async throws -> AudioRecordingResult {
+        guard !recordingRequestActive, recorder == nil, !isRecording else {
+            throw RecordingError.alreadyRecording
+        }
+        recordingRequestActive = true
+        defer { recordingRequestActive = false }
         guard await requestPermission() else { throw RecordingError.permissionDenied }
+        try Task.checkCancellation()
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
@@ -40,6 +48,7 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         recorder.prepareToRecord()
         guard recorder.record(forDuration: maximumDuration) else { throw RecordingError.couldNotStart }
         self.recorder = recorder
+        stopWasRequested = false
         isRecording = true
 
         let start = Date()
@@ -74,6 +83,11 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         isRecording = false
         self.recorder = nil
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        if stopWasRequested || Task.isCancelled {
+            stopWasRequested = false
+            cleanup(url: fileURL)
+            throw CancellationError()
+        }
         return AudioRecordingResult(
             fileURL: fileURL,
             adequateLevel: heardSpeech && peak > -32,
@@ -82,6 +96,7 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
     }
 
     func stop() {
+        stopWasRequested = recorder != nil
         recorder?.stop()
     }
 
@@ -92,11 +107,13 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
     enum RecordingError: LocalizedError {
         case permissionDenied
         case couldNotStart
+        case alreadyRecording
 
         var errorDescription: String? {
             switch self {
             case .permissionDenied: return "Microphone permission is required for voice responses."
             case .couldNotStart: return "SeeNA could not start the voice recording."
+            case .alreadyRecording: return "A voice response is already being recorded."
             }
         }
     }

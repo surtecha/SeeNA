@@ -12,7 +12,7 @@ struct NetworkConfiguration: Sendable {
             ?? Bundle.main.object(forInfoDictionaryKey: "SEENA_APP_TOKEN") as? String
         return NetworkConfiguration(
             baseURL: rawURL.flatMap(URL.init(string:)),
-            appToken: token ?? "seena-v0-prototype"
+            appToken: token ?? ""
         )
     }
 
@@ -65,25 +65,41 @@ struct ExplanationRequest: Codable, Sendable {
     struct EyeFacts: Codable, Sendable {
         let status: ScreeningStatus
         let quality: QualityLabel
-        /// Deterministic values calculated on-device. They are evidence for the
-        /// remote consistency check, never values supplied or revised by it.
-        let displayedEstimateDiopter: Double?
-        let thresholdDistanceMetres: Double?
-        let lastFailDiopter: Double?
-        let firstPassDiopter: Double?
-        let sensorUncertaintyDiopter: Double?
-        let repeatabilityDiopter: Double?
+    }
+
+    enum ComparisonCode: String, Codable, Sendable {
+        case eyesBroadlySimilar = "eyes_broadly_similar"
+        case eyesNoticeablyDifferent = "eyes_noticeably_different"
+        case reviewEyesSeparately = "review_eyes_separately"
+        case repeatNeeded = "repeat_needed"
+    }
+
+    enum ActionCode: String, Codable, Sendable {
+        case professionalExamRecommended = "professional_exam_recommended"
+        case routineExamRecommended = "routine_exam_recommended"
+        case noReliableResult = "no_reliable_result"
+        case accessibilityOnly = "accessibility_only"
+    }
+
+    enum LimitationCode: String, Codable, Sendable {
+        case notAPrescription = "not_a_prescription"
+        case hyperopiaNotAssessed = "hyperopia_not_assessed"
+        case clinicalAccuracyNotEstablished = "clinical_accuracy_not_established"
+        case phonePOCNotClinicallyValidated = "phone_screen_far_point_poc_not_clinically_validated"
+    }
+
+    enum IntegrityCode: String, Codable, Sendable {
+        case consistent
+        case reviewRequired = "review_required"
     }
 
     let locale: String
     let rightEye: EyeFacts?
     let leftEye: EyeFacts?
-    let comparison: String
-    let actionCode: String
-    let limitations: [String]
-    /// The on-device arithmetic/invariant check. The backend can only report
-    /// this evidence; it cannot turn it into a clinical judgement.
-    let localMathConsistent: Bool
+    let comparisonCode: ComparisonCode
+    let actionCode: ActionCode
+    let limitations: [LimitationCode]
+    let localIntegrityCode: IntegrityCode
 }
 
 enum ResultVerification: String, Codable, Sendable {
@@ -183,6 +199,7 @@ actor BackendClient {
     private func makeRequest(path: String, method: String) throws -> URLRequest {
         guard let baseURL = configuration.baseURL,
               baseURL.scheme == "https",
+              !configuration.appToken.isEmpty,
               let url = URL(string: path, relativeTo: baseURL) else {
             throw BackendError.invalidConfiguration
         }

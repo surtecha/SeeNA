@@ -29,17 +29,19 @@ const resultSafetyInstruction = `You are a communication and accessibility layer
 Explain only the deterministic screening facts supplied by the application.
 Never diagnose, prescribe, alter or infer measurements, claim clinical validation, promise accuracy,
 recommend treatment, or override the supplied action code. If a status is unreliableMeasurement,
-say clearly that no reliable numeric result was obtained. Do not quote, restate, round, or introduce
+say clearly that the task needs repeating. Do not quote, restate, round, or introduce
 any numeric value; the application presents its deterministic numbers separately. Return only the
-requested JSON schema.`;
+requested JSON schema. Use clear, professional, human language. Do not mention prototypes,
+experiments, validation, calibration, AI, models, providers, or internal codes.`;
 
 const resultConsistencyInstruction = `You are a non-clinical consistency checker for a research prototype.
 You cannot clinically validate the screening, diagnose, prescribe, assess eyesight, or claim accuracy.
 You must not alter, calculate, invent, round, repeat, or introduce any numeric values.
-Compare only the supplied deterministic facts, the localMathConsistent flag, and the candidate explanation.
-Return reviewRequired if localMathConsistent is false or if the candidate contradicts the supplied arithmetic or logic.
-Return consistent only when the candidate is compatible with a true localMathConsistent flag.
-Return notApplicable only when no deterministic numeric check can apply and localMathConsistent is true.
+Compare only the supplied allow-listed qualitative codes and the candidate explanation.
+Return reviewRequired when localIntegrityCode is review_required or when the candidate contradicts a supplied code.
+Return consistent only for numeric-capable statuses when the candidate is compatible with a consistent localIntegrityCode.
+Return notApplicable when any status starts with experimental and localIntegrityCode is consistent; this means numeric
+verification is not applicable, not that clinical validation succeeded.
 Return only the requested JSON schema.`;
 
 export async function generateExplanation(input: ExplanationRequest): Promise<ExplanationResponse> {

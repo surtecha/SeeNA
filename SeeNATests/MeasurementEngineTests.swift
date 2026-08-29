@@ -131,12 +131,106 @@ final class MeasurementEngineTests: XCTestCase {
         )
     }
 
+    func testGazeReadinessTreatsMissingAsUnavailableAndUsesHysteresis() {
+        var tracker = GazeReadinessTracker()
+        XCTAssertEqual(tracker.update(yawErrorDegrees: nil, pitchErrorDegrees: nil), .unavailable)
+        XCTAssertEqual(tracker.update(yawErrorDegrees: 7.5, pitchErrorDegrees: 2), .aligned)
+        XCTAssertEqual(tracker.update(yawErrorDegrees: 9.5, pitchErrorDegrees: 2), .aligned)
+        XCTAssertEqual(tracker.update(yawErrorDegrees: 12, pitchErrorDegrees: 2), .offCentre)
+    }
+
     func testDiopterConversionUsesMeasuredDistance() throws {
         XCTAssertEqual(try XCTUnwrap(RefractionEstimator.diopter(forDistanceMetres: 2.0)), -0.5, accuracy: 0.000_001)
         XCTAssertEqual(try XCTUnwrap(RefractionEstimator.diopter(forDistanceMetres: 1.0)), -1.0, accuracy: 0.000_001)
         XCTAssertEqual(try XCTUnwrap(RefractionEstimator.diopter(forDistanceMetres: 0.5)), -2.0, accuracy: 0.000_001)
         XCTAssertEqual(try XCTUnwrap(RefractionEstimator.diopter(forDistanceMetres: 0.4)), -2.5, accuracy: 0.000_001)
         XCTAssertNil(RefractionEstimator.diopter(forDistanceMetres: 0))
+    }
+
+    func testPresentedGeometryFreezesNativeScaleAndPixelBounds() throws {
+        let frozen = try XCTUnwrap(PresentedOptotypeGeometry.calculate(
+            distanceMetres: 0.8,
+            pixelsPerInch: 460,
+            nativeScale: 3
+        ))
+        XCTAssertTrue(frozen.geometry.pixelHeight.isMultiple(of: 5))
+        XCTAssertEqual(
+            frozen.geometry.pointHeight,
+            Double(frozen.geometry.pixelHeight) / 3,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(frozen.presentationDistanceMetres, 0.8)
+        XCTAssertEqual(frozen.nativeScale, 3)
+        XCTAssertNotNil(frozen.computedArcMinutes(at: 0.81))
+    }
+
+    func testLiveEyeViewModelGeometryPolicyUsesReadablePhonePOCTarget() throws {
+        for distance in [0.40, 0.80, 2.0] {
+            let presented = try XCTUnwrap(LiveEyeTestGeometryPolicy.calculate(
+                distanceMetres: distance,
+                pixelsPerInch: 460,
+                nativeScale: 3
+            ))
+            XCTAssertEqual(presented.geometry.presentationMode, .phonePOCLocator)
+            XCTAssertGreaterThanOrEqual(presented.geometry.pointHeight, 96)
+            XCTAssertLessThanOrEqual(presented.geometry.pointHeight, 220)
+            XCTAssertEqual(presented.geometry.requestedArcMinutes, 96, accuracy: 0.000_001)
+            XCTAssertGreaterThan(presented.geometry.effectiveArcMinutes, 0)
+        }
+    }
+
+    func testBoundedSpeechReturnsTimeoutWhenPromptDoesNotComplete() async {
+        let result = await BoundedSpeechPolicy.wait(timeoutNanoseconds: 10_000_000) {
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return .finished
+            } catch {
+                return .cancelled
+            }
+        }
+        XCTAssertEqual(result, .timedOut)
+    }
+
+    func testBoundedSpeechAndNavigationRejectCancellationOrBackNavigation() async {
+        let task = Task {
+            await BoundedSpeechPolicy.wait(timeoutNanoseconds: 5_000_000_000) {
+                do {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                    return .finished
+                } catch {
+                    return .cancelled
+                }
+            }
+        }
+        task.cancel()
+        let cancelledResult = await task.value
+        XCTAssertEqual(cancelledResult, .completed(.cancelled))
+
+        let generation = UUID()
+        XCTAssertTrue(CompletionNavigationPolicy.shouldAdvance(
+            after: .failed,
+            expectedRoute: "calibration",
+            currentRoute: "calibration",
+            expectedGeneration: generation,
+            currentGeneration: generation,
+            taskIsCancelled: false
+        ))
+        XCTAssertFalse(CompletionNavigationPolicy.shouldAdvance(
+            after: .finished,
+            expectedRoute: "right-eye",
+            currentRoute: "instructions",
+            expectedGeneration: generation,
+            currentGeneration: generation,
+            taskIsCancelled: false
+        ))
+        XCTAssertFalse(CompletionNavigationPolicy.shouldAdvance(
+            after: .finished,
+            expectedRoute: "right-eye",
+            currentRoute: "right-eye",
+            expectedGeneration: generation,
+            currentGeneration: UUID(),
+            taskIsCancelled: false
+        ))
     }
 
     func testClinicalReferenceGeometryRemainsPixelAlignedAndNearFiveArcMinutes() throws {
@@ -159,18 +253,7 @@ final class MeasurementEngineTests: XCTestCase {
     }
 
     func testPhonePOCSingleTargetIsLargePixelAlignedAndHonestAcrossSearchDistances() throws {
-        let expectedPointHeights: [Double: Double] = [
-            0.40: 200.0 / 3,
-            0.50: 255.0 / 3,
-            0.67: 340.0 / 3,
-            0.80: 405.0 / 3,
-            1.00: 505.0 / 3,
-            1.33: 675.0 / 3,
-            1.50: 760.0 / 3,
-            2.00: 1_010.0 / 3
-        ]
-
-        for distance in expectedPointHeights.keys.sorted() {
+        for distance in [0.40, 0.50, 0.67, 0.80, 1.00, 1.33, 1.50, 2.00] {
             let geometry = try XCTUnwrap(
                 OptotypeGeometry.calculate(
                     distanceMetres: distance,
@@ -182,17 +265,17 @@ final class MeasurementEngineTests: XCTestCase {
 
             XCTAssertEqual(geometry.presentationMode, .phonePOCLocator)
             XCTAssertEqual(geometry.requestedArcMinutes, 96)
-            XCTAssertEqual(geometry.pointHeight, try XCTUnwrap(expectedPointHeights[distance]), accuracy: 0.001)
+            XCTAssertGreaterThanOrEqual(geometry.pointHeight, 96)
+            XCTAssertLessThanOrEqual(geometry.pointHeight, 220)
             XCTAssertEqual(geometry.pixelHeight % 5, 0)
             XCTAssertEqual(geometry.strokePixels * 5, geometry.pixelHeight)
             XCTAssertEqual(geometry.innerDiameterPixels + geometry.strokePixels * 2, geometry.pixelHeight)
             XCTAssertEqual(geometry.gapPixels, geometry.strokePixels)
-            XCTAssertFalse(geometry.wasPointSizeClamped)
-            XCTAssertLessThan(abs(geometry.effectiveArcMinutes - 96), 1.3)
+            XCTAssertGreaterThan(geometry.effectiveArcMinutes, 0)
         }
     }
 
-    func testPhonePOCSingleTargetKeepsConstantVisualAngleWithoutPointClamp() throws {
+    func testPhonePOCSingleTargetTruthfullyRecordsPointClamping() throws {
         let near = try XCTUnwrap(
             OptotypeGeometry.calculate(
                 distanceMetres: 0.4,
@@ -210,11 +293,12 @@ final class MeasurementEngineTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(near.wasPointSizeClamped)
-        XCTAssertFalse(far.wasPointSizeClamped)
+        XCTAssertTrue(near.wasPointSizeClamped)
+        XCTAssertTrue(far.wasPointSizeClamped)
         XCTAssertEqual(near.requestedArcMinutes, far.requestedArcMinutes)
-        XCTAssertEqual(near.effectiveArcMinutes, far.effectiveArcMinutes, accuracy: 1.3)
-        XCTAssertGreaterThan(far.pointHeight, near.pointHeight * 4.9)
+        XCTAssertNotEqual(near.effectiveArcMinutes, far.effectiveArcMinutes)
+        XCTAssertEqual(near.pointHeight, 290.0 / 3.0, accuracy: 0.001)
+        XCTAssertEqual(far.pointHeight, 220, accuracy: 0.001)
     }
 
     func testOptotypeRejectsSubPixelGeometry() {
@@ -289,8 +373,41 @@ final class MeasurementEngineTests: XCTestCase {
         guard case .completed(let result) = engine.submit(gaborTrial(contrast: 0.16, outcome: .fail)) else {
             return XCTFail("Expected a completed Gabor result")
         }
-        XCTAssertEqual(result.status, .completed)
-        XCTAssertEqual(result.responseConsistency, .good)
+        XCTAssertEqual(result.status, .unreliableMeasurement)
+        XCTAssertEqual(result.responseConsistency, .poor)
+        guard case .completed(let replayed) = engine.nextAction else {
+            return XCTFail("Expected terminal result to remain available")
+        }
+        XCTAssertEqual(replayed.status, .unreliableMeasurement)
+    }
+
+    func testGaborCompletionDispositionDistinguishesPassBorderlineAndFail() {
+        var passing = GaborContrastEngine(eye: .right)
+        for contrast in GaborContrastEngine.contrastLevels.dropLast() {
+            XCTAssertEqual(
+                passing.submit(gaborTrial(contrast: contrast, outcome: .pass)),
+                .test(contrast: GaborContrastEngine.contrastLevels[
+                    GaborContrastEngine.contrastLevels.firstIndex(of: contrast)! + 1
+                ])
+            )
+        }
+        guard case .completed(let passed) = passing.submit(
+            gaborTrial(contrast: 0.06, outcome: .pass)
+        ) else { return XCTFail("Expected reliable completion") }
+        XCTAssertEqual(GaborCompletionPolicy.disposition(for: passed, integrityIsValid: true), .reliableCompletion)
+
+        var borderline = GaborContrastEngine(eye: .right)
+        XCTAssertEqual(borderline.submit(gaborTrial(contrast: 0.40, outcome: .borderline)), .test(contrast: 0.40))
+        guard case .completed(let borderlineResult) = borderline.submit(
+            gaborTrial(contrast: 0.40, outcome: .borderline)
+        ) else { return XCTFail("Expected repeat-needed borderline completion") }
+        XCTAssertEqual(GaborCompletionPolicy.disposition(for: borderlineResult, integrityIsValid: true), .repeatNeeded)
+
+        var failed = GaborContrastEngine(eye: .right)
+        guard case .completed(let failedResult) = failed.submit(
+            gaborTrial(contrast: 0.40, outcome: .fail)
+        ) else { return XCTFail("Expected repeat-needed failed completion") }
+        XCTAssertEqual(GaborCompletionPolicy.disposition(for: failedResult, integrityIsValid: true), .repeatNeeded)
     }
 
     func testGaborContrastStaircaseRejectsStaleWrongLevel() {
@@ -569,6 +686,159 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertTrue(aggregate.issues.contains(.distanceOffTarget))
     }
 
+    func testBlockGazeCoverageAcceptsMinorityNoiseAndRejectsMissingOrOffCentre() {
+        let aligned = (0..<18).map { _ in sample(
+            distance: 0.4, standardDeviation: 0.005, tracking: 0.99,
+            stable: true, drift: 0.1, acceleration: 0.002,
+            yaw: 0, pitch: 0, luminance: 0.5, faceCount: 1,
+            gazeYaw: 2, gazePitch: 2
+        ) }
+        let noise = (0..<2).map { _ in sample(
+            distance: 0.4, standardDeviation: 0.005, tracking: 0.99,
+            stable: true, drift: 0.1, acceleration: 0.002,
+            yaw: 0, pitch: 0, luminance: 0.5, faceCount: 1,
+            gazeYaw: 15, gazePitch: 2
+        ) }
+        let accepted = BlockMeasurementQualityEngine.evaluate(
+            samples: aligned + noise,
+            targetDistanceMetres: 0.4,
+            targetToleranceMetres: 0.06,
+            thresholds: .conservative
+        )
+        XCTAssertTrue(accepted.isAccepted)
+
+        let missing = aligned.map { value in sample(
+            distance: value.correctedDistanceMetres ?? 0.4,
+            standardDeviation: 0.005, tracking: 0.99, stable: true,
+            drift: 0.1, acceleration: 0.002, yaw: 0, pitch: 0,
+            luminance: 0.5, faceCount: 1, gazeYaw: nil, gazePitch: nil
+        ) }
+        XCTAssertTrue(BlockMeasurementQualityEngine.evaluate(
+            samples: missing, targetDistanceMetres: 0.4,
+            targetToleranceMetres: 0.06, thresholds: .conservative
+        ).issues.contains(.gazeUnavailable))
+
+        let offCentre = aligned.map { _ in sample(
+            distance: 0.4, standardDeviation: 0.005, tracking: 0.99,
+            stable: true, drift: 0.1, acceleration: 0.002,
+            yaw: 0, pitch: 0, luminance: 0.5, faceCount: 1,
+            gazeYaw: 14, gazePitch: 0
+        ) }
+        XCTAssertTrue(BlockMeasurementQualityEngine.evaluate(
+            samples: offCentre, targetDistanceMetres: 0.4,
+            targetToleranceMetres: 0.06, thresholds: .conservative
+        ).issues.contains(.gazeOffCentre))
+    }
+
+    func testUnvalidatedProfileCannotUnlockNumericResults() {
+        let result = EyeScreeningResult(
+            eye: .right,
+            status: .validEstimate,
+            lastFailDiopter: -2,
+            firstPassDiopter: -2.25,
+            displayedEstimateDiopter: -2.25,
+            thresholdDistanceMetres: 0.44,
+            sensorUncertaintyDiopter: 0.05,
+            repeatabilityDiopter: 0.05,
+            trackingQuality: .good,
+            responseConsistency: .good,
+            warnings: []
+        )
+        let safe = NumericResultEligibility.sanitize(result, numericResultsAllowed: false)
+        XCTAssertEqual(safe.status, .experimentalThresholdObserved)
+        XCTAssertEqual(safe.recommendedAction, .professionalReviewRecommended)
+        XCTAssertNil(safe.displayedEstimateDiopter)
+        XCTAssertNil(safe.thresholdDistanceMetres)
+        XCTAssertTrue(ResultIntegrityValidator.validate(safe).isValid)
+    }
+
+    func testNumericEligibilityRequiresExactDeviceCalibrationEvidenceAndSecondFaceDetection() {
+        let profile = DeviceProfile(
+            schemaVersion: 1,
+            profileVersion: 2,
+            hardwareIdentifiers: ["iPhone-test"],
+            marketingFamily: "Test iPhone",
+            variant: "Exact",
+            nativePixelWidth: 1_200,
+            nativePixelHeight: 2_600,
+            displayScale: 3,
+            pixelsPerInch: 460,
+            expectedCameraType: .trueDepth,
+            calibration: DistanceCalibration(
+                scale: 1,
+                offsetMetres: 0,
+                baselineDistanceMetres: 0.40,
+                validatedDistancesMetres: NumericResultEligibility.requiredCalibrationDistances
+            ),
+            qualityThresholds: .conservative,
+            minimumValidatedDistance: 0.40,
+            maximumValidatedDistance: 2.00,
+            validationEvidence: ValidationSummary(
+                sampleCount: 1_200,
+                maximumMedianErrorBelowOneMetre: 0.02,
+                maximumMedianPercentageErrorAtOrAboveOneMetre: 0.04,
+                validatedAt: Date(),
+                notes: "Test fixture"
+            ),
+            displayRasterValidation: DisplayRasterValidation(
+                sampleCount: 100,
+                nativePixelWidth: 1_200,
+                nativePixelHeight: 2_600,
+                displayScale: 3,
+                pixelsPerInch: 460,
+                validatedAt: Date(),
+                notes: "Independent test fixture"
+            ),
+            clinicalValidationEvidence: ClinicalValidationEvidence(
+                participantCount: 100,
+                observationCount: 1_200,
+                protocolIdentifier: "fixture-protocol",
+                validatedAt: Date(),
+                notes: "Independent test fixture"
+            ),
+            isValidated: true
+        )
+
+        let distanceOnly = DeviceProfile(
+            schemaVersion: profile.schemaVersion,
+            profileVersion: profile.profileVersion,
+            hardwareIdentifiers: profile.hardwareIdentifiers,
+            marketingFamily: profile.marketingFamily,
+            variant: profile.variant,
+            nativePixelWidth: profile.nativePixelWidth,
+            nativePixelHeight: profile.nativePixelHeight,
+            displayScale: profile.displayScale,
+            pixelsPerInch: profile.pixelsPerInch,
+            expectedCameraType: profile.expectedCameraType,
+            calibration: profile.calibration,
+            qualityThresholds: profile.qualityThresholds,
+            minimumValidatedDistance: profile.minimumValidatedDistance,
+            maximumValidatedDistance: profile.maximumValidatedDistance,
+            validationEvidence: profile.validationEvidence,
+            isValidated: true
+        )
+        XCTAssertFalse(NumericResultEligibility.allowsNumericResults(
+            profile: distanceOnly,
+            supportsSecondFaceDetection: true,
+            matchesExactRuntimeDevice: true
+        ))
+        XCTAssertFalse(NumericResultEligibility.allowsNumericResults(
+            profile: profile,
+            supportsSecondFaceDetection: true,
+            matchesExactRuntimeDevice: false
+        ))
+        XCTAssertFalse(NumericResultEligibility.allowsNumericResults(
+            profile: profile,
+            supportsSecondFaceDetection: false,
+            matchesExactRuntimeDevice: true
+        ))
+        XCTAssertTrue(NumericResultEligibility.allowsNumericResults(
+            profile: profile,
+            supportsSecondFaceDetection: true,
+            matchesExactRuntimeDevice: true
+        ))
+    }
+
     func testBlockMeasurementQualityRejectsPersistentPoorConditions() {
         let samples = (0..<20).map { index in
             let poor = index >= 14
@@ -681,6 +951,58 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertEqual(wrongTargetResult.status, .unreliableMeasurement)
     }
 
+    func testDebugDistanceOwnerRejectsStaleWriterAcrossRightAndLeftJourney() {
+        var controller = ExclusiveDistanceTargetController()
+        let rightOwner = controller.claim()
+        XCTAssertTrue(controller.update(0.40, owner: rightOwner))
+        XCTAssertEqual(controller.targetDistanceMetres, 0.40, accuracy: 0.000_1)
+        XCTAssertTrue(controller.release(owner: rightOwner))
+
+        let leftOwner = controller.claim()
+        XCTAssertTrue(controller.update(0.40, owner: leftOwner))
+        XCTAssertFalse(controller.update(1.33, owner: rightOwner))
+        XCTAssertEqual(controller.targetDistanceMetres, 0.40, accuracy: 0.000_1)
+        XCTAssertTrue(controller.update(0.80, owner: leftOwner))
+        XCTAssertEqual(controller.targetDistanceMetres, 0.80, accuracy: 0.000_1)
+        XCTAssertFalse(controller.release(owner: rightOwner))
+        XCTAssertEqual(controller.owner, leftOwner)
+    }
+
+    func testOnlyFinishedSpeechMayAdvanceAndSensorEpochInvalidatesStaleWork() {
+        XCTAssertTrue(SpeechProgressionPolicy.shouldAdvance(after: .finished))
+        XCTAssertFalse(SpeechProgressionPolicy.shouldAdvance(after: .cancelled))
+        XCTAssertFalse(SpeechProgressionPolicy.shouldAdvance(after: .failed))
+
+        var epochs = SensorStreamEpochState()
+        let activeBlockEpoch = epochs.epoch
+        XCTAssertTrue(epochs.isCurrent(activeBlockEpoch))
+        XCTAssertEqual(epochs.invalidate(), 1)
+        XCTAssertFalse(epochs.isCurrent(activeBlockEpoch))
+    }
+
+    func testTrialGeometryFieldsRemainBackwardCodable() throws {
+        let current = block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .pass)
+        let encoded = try JSONEncoder().encode(current)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        for key in [
+            "presentationDistanceMetres", "renderedPixelHeight", "renderedPointHeight",
+            "renderedAngularSizeArcMinutes", "actualAngularSizeArcMinutes",
+            "geometryDistanceDriftFraction"
+        ] {
+            object.removeValue(forKey: key)
+        }
+        if var quality = object["quality"] as? [String: Any] {
+            quality.removeValue(forKey: "gazeCoverage")
+            object["quality"] = quality
+        }
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(TrialBlock.self, from: legacyData)
+        XCTAssertNil(decoded.presentationDistanceMetres)
+        XCTAssertNil(decoded.actualAngularSizeArcMinutes)
+        XCTAssertNil(decoded.quality.gazeCoverage)
+    }
+
     private func block(eye: Eye, candidate: Double, distance: Double, outcome: TrialOutcome) -> TrialBlock {
         let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down]
         let responses = outcome == .pass ? targets : Array(repeating: OptotypeDirection.left, count: 7)
@@ -744,7 +1066,9 @@ final class MeasurementEngineTests: XCTestCase {
         yaw: Double,
         pitch: Double,
         luminance: Double,
-        faceCount: Int
+        faceCount: Int,
+        gazeYaw: Double? = 0,
+        gazePitch: Double? = 0
     ) -> DistanceSample {
         DistanceSample(
             rawARDistanceMetres: distance,
@@ -758,6 +1082,8 @@ final class MeasurementEngineTests: XCTestCase {
             accelerationRMS: acceleration,
             headYawDegrees: yaw,
             headPitchDegrees: pitch,
+            gazeYawErrorDegrees: gazeYaw,
+            gazePitchErrorDegrees: gazePitch,
             luminance: luminance,
             faceCount: faceCount,
             interEyePixels: 200

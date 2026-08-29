@@ -25,6 +25,45 @@ enum GaborAction: Equatable, Sendable {
     case completed(GaborScreeningResult)
 }
 
+enum GaborCompletionDisposition: Equatable, Sendable {
+    case reliableCompletion
+    case repeatNeeded
+
+    var phaseTitle: String {
+        switch self {
+        case .reliableCompletion: return "ORIENTATION TASK COMPLETE"
+        case .repeatNeeded: return "REPEAT NEEDED"
+        }
+    }
+
+    var screenMessage: String {
+        switch self {
+        case .reliableCompletion: return "Orientation task complete"
+        case .repeatNeeded: return "Finished, but this orientation task needs repeating"
+        }
+    }
+
+    func spokenMessage(for eye: Eye) -> String {
+        switch self {
+        case .reliableCompletion:
+            return "\(eye.displayName) eye non-clinical Gabor orientation task complete."
+        case .repeatNeeded:
+            return "\(eye.displayName) eye orientation task finished, but it needs repeating."
+        }
+    }
+}
+
+enum GaborCompletionPolicy {
+    static func disposition(
+        for result: GaborScreeningResult,
+        integrityIsValid: Bool
+    ) -> GaborCompletionDisposition {
+        result.status == .completed && integrityIsValid
+            ? .reliableCompletion
+            : .repeatNeeded
+    }
+}
+
 struct GaborContrastEngine: Sendable {
     static let contrastLevels = [0.40, 0.25, 0.16, 0.10, 0.06]
 
@@ -33,20 +72,24 @@ struct GaborContrastEngine: Sendable {
     private var borderlineRepeats = 0
     private var trials: [GaborTrial] = []
     private var isComplete = false
+    private var completedResult: GaborScreeningResult?
 
     init(eye: Eye) {
         self.eye = eye
     }
 
     var nextAction: GaborAction {
-        guard !isComplete else { return .completed(result()) }
+        guard !isComplete else { return .completed(completedResult ?? unreliableResult()) }
         return .test(contrast: Self.contrastLevels[index])
     }
 
     mutating func submit(_ trial: GaborTrial) -> GaborAction {
-        guard trial.eye == eye, !isComplete else {
+        if isComplete { return .completed(completedResult ?? unreliableResult()) }
+        guard trial.eye == eye else {
             isComplete = true
-            return .completed(unreliableResult())
+            let result = unreliableResult()
+            completedResult = result
+            return .completed(result)
         }
         guard case .test(let requestedContrast) = nextAction,
               abs(trial.contrast - requestedContrast) <= 0.000_001 else {
@@ -54,7 +97,9 @@ struct GaborContrastEngine: Sendable {
             // advance the staircase or become evidence for the public POC
             // completion state.
             isComplete = true
-            return .completed(unreliableResult())
+            let result = unreliableResult()
+            completedResult = result
+            return .completed(result)
         }
         trials.append(trial)
 
@@ -63,14 +108,18 @@ struct GaborContrastEngine: Sendable {
             borderlineRepeats = 0
             if index == Self.contrastLevels.count - 1 {
                 isComplete = true
-                return .completed(result())
+                let result = result()
+                completedResult = result
+                return .completed(result)
             }
             index += 1
             return nextAction
 
         case .fail:
             isComplete = true
-            return .completed(result())
+            let result = unreliableResult()
+            completedResult = result
+            return .completed(result)
 
         case .borderline:
             if borderlineRepeats == 0 {
@@ -78,11 +127,15 @@ struct GaborContrastEngine: Sendable {
                 return nextAction
             }
             isComplete = true
-            return .completed(result())
+            let result = unreliableResult()
+            completedResult = result
+            return .completed(result)
 
         case .invalid:
             isComplete = true
-            return .completed(unreliableResult())
+            let result = unreliableResult()
+            completedResult = result
+            return .completed(result)
         }
     }
 

@@ -42,7 +42,7 @@ enum RefractionEstimator {
     }
 }
 
-enum OptotypePresentationMode: Equatable, Sendable {
+enum OptotypePresentationMode: String, Codable, Equatable, Sendable {
     /// The clinical 5-arcminute reference geometry. This remains available for
     /// calibration and evidence, but is too small for this phone-based POC at
     /// the screening distances used by the app.
@@ -50,12 +50,11 @@ enum OptotypePresentationMode: Equatable, Sendable {
 
     /// A single, centred, non-scored locator enlarged for a phone-screen POC.
     ///
-    /// The requested angle is 96 arcminutes. That yields a clearly visible
-    /// ~67-point target at 40 cm and a nearly screen-width ~336-point target at
-    /// 2 m on a 460-ppi iPhone. Unlike a point-size clamp, the target keeps the
-    /// same visual angle at every distance. It helps a participant find the
-    /// centre of the phone before the scored target appears, but it must never
-    /// contribute to a refractive estimate or be interpreted as a clinical
+    /// The requested angle is 96 arcminutes, then the live renderer is bounded
+    /// to 96...220 points so it remains readable and fits the phone. Requested
+    /// and effective rendered angles are both retained; clamping is never
+    /// disguised as constant-angle or clinical geometry. This POC target must
+    /// never unlock a refractive estimate or be interpreted as a clinical
     /// 5-arcminute acuity target.
     case phonePOCLocator
 
@@ -69,12 +68,12 @@ enum OptotypePresentationMode: Equatable, Sendable {
     var pointHeightRange: ClosedRange<Double>? {
         switch self {
         case .clinicalFiveArcMinute: return nil
-        case .phonePOCLocator: return nil
+        case .phonePOCLocator: return 96...220
         }
     }
 }
 
-struct OptotypeGeometry: Equatable, Sendable {
+struct OptotypeGeometry: Codable, Equatable, Sendable {
     static let clinicalReferenceArcMinutes = 5.0
 
     let pixelHeight: Int
@@ -127,6 +126,218 @@ struct OptotypeGeometry: Equatable, Sendable {
             requestedArcMinutes: requestedArcMinutes,
             effectiveArcMinutes: effectiveArcMinutes,
             wasPointSizeClamped: rounded != angularPixelHeight
+        )
+    }
+
+    static func angularSizeArcMinutes(
+        pixelHeight: Int,
+        distanceMetres: Double,
+        pixelsPerInch: Double
+    ) -> Double? {
+        guard pixelHeight > 0, distanceMetres > 0, pixelsPerInch > 0 else { return nil }
+        let physicalHeightMetres = Double(pixelHeight) / pixelsPerInch * 0.0254
+        let radians = 2 * atan(physicalHeightMetres / (2 * distanceMetres))
+        return radians * 180 / .pi * 60
+    }
+}
+
+/// One immutable presentation record shared by the renderer and persisted
+/// block evidence. Values are requested/computed POC geometry until exact
+/// physical raster validation exists; they are not clinically validated.
+struct PresentedOptotypeGeometry: Codable, Equatable, Sendable {
+    let presentationDistanceMetres: Double
+    let nativeScale: Double
+    let pixelsPerInch: Double
+    let geometry: OptotypeGeometry
+
+    static func calculate(
+        distanceMetres: Double,
+        pixelsPerInch: Double,
+        nativeScale: Double,
+        presentationMode: OptotypePresentationMode = .clinicalFiveArcMinute
+    ) -> PresentedOptotypeGeometry? {
+        guard let geometry = OptotypeGeometry.calculate(
+            distanceMetres: distanceMetres,
+            pixelsPerInch: pixelsPerInch,
+            displayScale: nativeScale,
+            presentationMode: presentationMode
+        ) else { return nil }
+        return PresentedOptotypeGeometry(
+            presentationDistanceMetres: distanceMetres,
+            nativeScale: nativeScale,
+            pixelsPerInch: pixelsPerInch,
+            geometry: geometry
+        )
+    }
+
+    func computedArcMinutes(at actualDistanceMetres: Double) -> Double? {
+        OptotypeGeometry.angularSizeArcMinutes(
+            pixelHeight: geometry.pixelHeight,
+            distanceMetres: actualDistanceMetres,
+            pixelsPerInch: pixelsPerInch
+        )
+    }
+}
+
+/// The single geometry entry point used by the live Landolt journey.
+///
+/// Keeping this policy in the testable core prevents a view model from silently
+/// falling back to the tiny clinical reference target. The resulting geometry
+/// remains requested/computed phone-POC evidence and never unlocks numeric or
+/// clinical output.
+enum LiveEyeTestGeometryPolicy {
+    static let presentationMode: OptotypePresentationMode = .phonePOCLocator
+
+    static func calculate(
+        distanceMetres: Double,
+        pixelsPerInch: Double,
+        nativeScale: Double
+    ) -> PresentedOptotypeGeometry? {
+        PresentedOptotypeGeometry.calculate(
+            distanceMetres: distanceMetres,
+            pixelsPerInch: pixelsPerInch,
+            nativeScale: nativeScale,
+            presentationMode: presentationMode
+        )
+    }
+}
+
+enum SpeechDeadlineResult: Equatable, Sendable {
+    case completed(SpeechOutcome)
+    case timedOut
+}
+
+/// Bounds a cancellation-aware speech operation without introducing a second
+/// audio channel. The caller owns the one active prompt and stops it if this
+/// policy reports a timeout.
+enum BoundedSpeechPolicy {
+    static func wait(
+        timeoutNanoseconds: UInt64,
+        operation: @escaping @Sendable () async -> SpeechOutcome
+    ) async -> SpeechDeadlineResult {
+        guard !Task.isCancelled else { return .completed(.cancelled) }
+
+        return await withTaskGroup(of: SpeechDeadlineResult.self) { group in
+            group.addTask {
+                .completed(await operation())
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    return .timedOut
+                } catch {
+                    return .completed(.cancelled)
+                }
+            }
+
+            let first = await group.next() ?? .completed(.failed)
+            group.cancelAll()
+            guard !Task.isCancelled else { return .completed(.cancelled) }
+            return first
+        }
+    }
+}
+
+/// A committed screen transition is independent of speech success, but it may
+/// only append while the originating task, epoch, and route are still current.
+enum CompletionNavigationPolicy {
+    static func shouldAdvance<Route: Equatable>(
+        after speechOutcome: SpeechOutcome,
+        expectedRoute: Route,
+        currentRoute: Route?,
+        expectedGeneration: UUID,
+        currentGeneration: UUID,
+        taskIsCancelled: Bool
+    ) -> Bool {
+        _ = speechOutcome
+        return !taskIsCancelled
+            && expectedRoute == currentRoute
+            && expectedGeneration == currentGeneration
+    }
+}
+
+enum NumericResultEligibility {
+    static let requiredCalibrationDistances = [0.40, 0.50, 0.67, 0.80, 1.00, 1.33, 1.50, 2.00]
+
+    static func allowsNumericResults(
+        profile: DeviceProfile?,
+        supportsSecondFaceDetection: Bool,
+        matchesExactRuntimeDevice: Bool
+    ) -> Bool {
+        guard let profile,
+              matchesExactRuntimeDevice,
+              profile.isValidated,
+              profile.validationEvidence.sampleCount >= 1_200,
+              profile.validationEvidence.validatedAt != nil,
+              let nearError = profile.validationEvidence.maximumMedianErrorBelowOneMetre,
+              nearError.isFinite,
+              nearError <= 0.03,
+              let farError = profile.validationEvidence.maximumMedianPercentageErrorAtOrAboveOneMetre,
+              farError.isFinite,
+              farError <= 0.05,
+              profile.calibration.scale.isFinite,
+              profile.calibration.scale > 0,
+              profile.calibration.offsetMetres.isFinite,
+              profile.minimumValidatedDistance <= 0.40,
+              profile.maximumValidatedDistance >= 2.00,
+              let display = profile.displayRasterValidation,
+              display.sampleCount >= 100,
+              display.validatedAt != nil,
+              display.nativePixelWidth == profile.nativePixelWidth,
+              display.nativePixelHeight == profile.nativePixelHeight,
+              abs(display.displayScale - profile.displayScale) < 0.001,
+              abs(display.pixelsPerInch - profile.pixelsPerInch) < 0.1,
+              let clinical = profile.clinicalValidationEvidence,
+              clinical.participantCount >= 100,
+              clinical.observationCount >= 1_200,
+              !clinical.protocolIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              clinical.validatedAt != nil,
+              supportsSecondFaceDetection else { return false }
+        return requiredCalibrationDistances.allSatisfy { required in
+            profile.calibration.validatedDistancesMetres.contains {
+                abs($0 - required) < 0.005
+            }
+        }
+    }
+
+    static func sanitize(
+        _ result: EyeScreeningResult,
+        numericResultsAllowed: Bool
+    ) -> EyeScreeningResult {
+        guard !numericResultsAllowed,
+              [.validEstimate, .noMyopiaDetectedWithinRange, .strongerThanSupportedRange]
+                .contains(result.status) else { return result }
+        let qualitativeStatus: ScreeningStatus
+        let action: ScreeningAction
+        switch result.status {
+        case .validEstimate:
+            qualitativeStatus = .experimentalThresholdObserved
+            action = .professionalReviewRecommended
+        case .noMyopiaDetectedWithinRange:
+            qualitativeStatus = .experimentalFarthestTargetPassed
+            action = .routineExamRecommended
+        case .strongerThanSupportedRange:
+            qualitativeStatus = .experimentalAdverseBoundary
+            action = .professionalReviewRecommended
+        default:
+            qualitativeStatus = .experimentalTaskCompleted
+            action = .repeatRequired
+        }
+        return EyeScreeningResult(
+            eye: result.eye,
+            status: qualitativeStatus,
+            lastFailDiopter: nil,
+            firstPassDiopter: nil,
+            displayedEstimateDiopter: nil,
+            thresholdDistanceMetres: nil,
+            sensorUncertaintyDiopter: nil,
+            repeatabilityDiopter: nil,
+            trackingQuality: result.trackingQuality,
+            responseConsistency: result.responseConsistency,
+            warnings: Array(Set(result.warnings + [
+                .researchPrototype, .notPrescription, .clinicalAccuracyNotEstablished
+            ])),
+            recommendedAction: action
         )
     }
 }
@@ -282,5 +493,58 @@ enum CalibrationFitter {
             guard let medianError = Statistics.median(errors) else { return false }
             return groundTruth < 1 ? medianError <= 0.03 : medianError / groundTruth <= 0.05
         }
+    }
+}
+
+/// A small ownership reducer used by the DEBUG sensor simulator. Only the
+/// screen that currently owns the token can move the synthetic distance,
+/// preventing a disappearing screen from racing the next eye/test screen.
+struct ExclusiveDistanceTargetController: Equatable, Sendable {
+    private(set) var owner: UUID?
+    private(set) var targetDistanceMetres: Double = 0.40
+
+    mutating func claim() -> UUID {
+        let token = UUID()
+        owner = token
+        targetDistanceMetres = 0.40
+        return token
+    }
+
+    @discardableResult
+    mutating func update(_ distance: Double, owner token: UUID?) -> Bool {
+        guard token == owner, distance.isFinite, distance > 0 else { return false }
+        targetDistanceMetres = distance
+        return true
+    }
+
+    @discardableResult
+    mutating func release(owner token: UUID?) -> Bool {
+        guard token == owner else { return false }
+        owner = nil
+        return true
+    }
+
+    mutating func reset() {
+        owner = nil
+        targetDistanceMetres = 0.40
+    }
+}
+
+enum SpeechProgressionPolicy {
+    static func shouldAdvance(after outcome: SpeechOutcome) -> Bool {
+        outcome == .finished
+    }
+}
+
+struct SensorStreamEpochState: Equatable, Sendable {
+    private(set) var epoch: UInt64 = 0
+
+    mutating func invalidate() -> UInt64 {
+        epoch &+= 1
+        return epoch
+    }
+
+    func isCurrent(_ capturedEpoch: UInt64) -> Bool {
+        capturedEpoch == epoch
     }
 }

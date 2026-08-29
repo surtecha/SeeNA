@@ -10,7 +10,7 @@ import {
   type ChoiceSetID
 } from "../lib/direction-parser.js";
 import { openAIClient } from "../lib/openai.js";
-import { secureEndpoint } from "../lib/security.js";
+import { chargeProviderBudget, secureEndpoint } from "../lib/security.js";
 
 export const config = { api: { bodyParser: false } };
 
@@ -26,12 +26,22 @@ function first(fields: Fields, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function isPayloadTooLarge(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const details = error as { code?: unknown; httpCode?: unknown };
+  if (Number(details.httpCode) === 413) return true;
+  // Formidable 3.5.4 uses numeric codes for its size and count limits.
+  return [1006, 1007, 1009, 1015, 1016].includes(Number(details.code));
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
-  if (!secureEndpoint(req, res)) return;
+  if (!await secureEndpoint(req, res, "transcribe")) return;
   const form = formidable({
     allowEmptyFiles: false,
     maxFiles: 1,
     maxFileSize: 5 * 1024 * 1024,
+    maxTotalFileSize: 5 * 1024 * 1024,
+    maxFieldsSize: 256 * 1024,
     maxFields: 8,
     multiples: false,
     keepExtensions: true,
@@ -55,6 +65,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       res.status(400).json({ error: "invalid_audio" });
       return;
     }
+
+    if (!await chargeProviderBudget(res, "transcribe")) return;
 
     const transcription = await openAIClient().audio.transcriptions.create({
       file: createReadStream(audio.filepath),
@@ -147,8 +159,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       failureReason: transcript.length > 0 ? null : "empty_transcript"
     });
   } catch (error) {
-    const status = error instanceof z.ZodError ? 400 : 502;
-    res.status(status).json({ error: status === 400 ? "invalid_request" : "transcription_unavailable" });
+    const status = error instanceof z.ZodError ? 400 : isPayloadTooLarge(error) ? 413 : 502;
+    res.status(status).json({ error: status === 400 ? "invalid_request" : status === 413 ? "request_too_large" : "transcription_unavailable" });
   } finally {
     const fileValues = Object.values(files).flatMap((value) => value ?? []);
     await Promise.all(fileValues.map((file) => unlink(file.filepath).catch(() => undefined)));

@@ -9,6 +9,7 @@ enum GaborTestPhase: Equatable {
     case checking
     case retry(String)
     case completed
+    case needsRepeat
 
     var title: String {
         switch self {
@@ -18,8 +19,13 @@ enum GaborTestPhase: Equatable {
         case .recording: return "SAY LEFT OR RIGHT"
         case .checking: return "CHECKING"
         case .retry: return "SAY IT AGAIN"
-        case .completed: return "CONTRAST CHECK COMPLETE"
+        case .completed: return "ORIENTATION TASK COMPLETE"
+        case .needsRepeat: return "REPEAT NEEDED"
         }
+    }
+
+    var isTerminal: Bool {
+        self == .completed || self == .needsRepeat
     }
 }
 
@@ -38,6 +44,8 @@ final class GaborTestViewModel: ObservableObject {
     @Published private(set) var guidanceCue: DistanceGuidanceCue = .findFace
     @Published private(set) var completedTargetCount = 0
     @Published private(set) var isScoredTargetVisible = false
+    @Published private(set) var completionDisposition: GaborCompletionDisposition?
+    @Published var showingOperatorInput = false
 
     let targetDistance = 0.40
     let totalTargetCount = SequentialGaborSession.requiredTargetCount
@@ -55,6 +63,12 @@ final class GaborTestViewModel: ObservableObject {
     private var sequentialSession: SequentialGaborSession?
     private var acceptedTranscripts: [String] = []
     private var activeTask: Task<Void, Never>?
+    private var gazeTracker = GazeReadinessTracker()
+    private var gazeState: GazeReadiness = .unavailable
+    private var simulatorDistanceOwner: UUID?
+    private var operatorSubmissionResolved = false
+    private var operatorModeRequested = false
+    private var lifecycleGeneration = UUID()
 
     init(eye: Eye) {
         self.eye = eye
@@ -75,9 +89,21 @@ final class GaborTestViewModel: ObservableObject {
         Double(completedTargetCount) / Double(totalTargetCount)
     }
 
-    func begin(using dependencies: AppDependencies) {
+    var operatorEntryEnabled: Bool {
+        !showingOperatorInput
+            && sequentialSession != nil
+            && targets.count == totalTargetCount
+    }
+
+    func begin(using dependencies: AppDependencies, session: AppSession) {
         guard !announcedMove else { return }
         announcedMove = true
+        operatorModeRequested = session.responseMode == .operatorOnly
+        simulatorDistanceOwner = dependencies.sensorCoordinator.claimSimulatorDistanceOwner()
+        dependencies.sensorCoordinator.setSimulatorTargetDistance(
+            targetDistance,
+            owner: simulatorDistanceOwner
+        )
         dependencies.spokenPrompts.preloadNavigationGuidance(additionalTexts: [
             SpokenTestCountdown.startPrompt(responseInstruction: Self.responseInstruction)
         ])
@@ -89,10 +115,16 @@ final class GaborTestViewModel: ObservableObject {
     }
 
     func observe(_ sample: DistanceSample?, dependencies: AppDependencies, session: AppSession) {
-        dependencies.sensorCoordinator.setSimulatorTargetDistance(targetDistance)
         mostRecentSample = sample
+        gazeState = gazeTracker.update(
+            yawErrorDegrees: sample?.gazeYawErrorDegrees,
+            pitchErrorDegrees: sample?.gazePitchErrorDegrees
+        )
         if isCollectingMeasurementSamples, let sample {
             blockSamples.append(sample)
+            if blockSamples.count > 280 {
+                blockSamples.removeFirst(blockSamples.count - 280)
+            }
         }
 
         let measured = sample.flatMap {
@@ -107,6 +139,7 @@ final class GaborTestViewModel: ObservableObject {
                 && abs($0.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
                 && abs($0.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
                 && $0.luminance >= 0.12
+                && gazeState == .aligned
         } == true
         let timestamp = sample?.timestamp.timeIntervalSinceReferenceDate
             ?? Date().timeIntervalSinceReferenceDate
@@ -137,11 +170,13 @@ final class GaborTestViewModel: ObservableObject {
                 stabilityProgress = 0
                 blockLaunchPending = true
                 HapticFeedback.success()
+                let generation = lifecycleGeneration
                 activeTask = Task { [weak self] in
                     await self?.runBlock(
                         start: .acceptedPosition,
                         dependencies: dependencies,
-                        session: session
+                        session: session,
+                        generation: generation
                     )
                 }
             }
@@ -159,10 +194,13 @@ final class GaborTestViewModel: ObservableObject {
     }
 
     func cancel(using dependencies: AppDependencies) {
+        lifecycleGeneration = UUID()
         activeTask?.cancel()
         activeTask = nil
         dependencies.audioRecorder.stop()
         dependencies.spokenPrompts.stop()
+        dependencies.sensorCoordinator.releaseSimulatorDistanceOwner(simulatorDistanceOwner)
+        simulatorDistanceOwner = nil
         isCollectingMeasurementSamples = false
         isRunning = false
         blockLaunchPending = false
@@ -177,9 +215,10 @@ final class GaborTestViewModel: ObservableObject {
     private func runBlock(
         start: BlockStart,
         dependencies: AppDependencies,
-        session: AppSession
+        session: AppSession,
+        generation: UUID
     ) async {
-        guard !isRunning else {
+        guard generation == lifecycleGeneration, !Task.isCancelled, !isRunning else {
             blockLaunchPending = false
             return
         }
@@ -238,12 +277,20 @@ final class GaborTestViewModel: ObservableObject {
             }
         }
 
+        if operatorModeRequested || !dependencies.network.isConnected {
+            isRunning = false
+            phase = .retry(operatorModeRequested
+                ? "Microphone response is off. Use the visible operator response controls."
+                : "Voice service is offline. Use operator input without waiting for the network.")
+            return
+        }
+
         guard await collectSevenAnswers(dependencies: dependencies) else {
             isCollectingMeasurementSamples = false
             isRunning = false
             return
         }
-        await scoreBlock(dependencies: dependencies, session: session)
+        await scoreBlock(dependencies: dependencies, session: session, generation: generation)
     }
 
     /// Repeats the same patch for as long as necessary. Transcription and all
@@ -333,13 +380,16 @@ final class GaborTestViewModel: ObservableObject {
                 HapticFeedback.selection()
             } catch is CancellationError {
                 isCollectingMeasurementSamples = false
+                if !showingOperatorInput, sequentialSession?.currentTarget != nil {
+                    phase = .retry("The response was interrupted. Repeat this patch or use operator input.")
+                    isRunning = false
+                }
                 return false
             } catch {
                 isCollectingMeasurementSamples = false
-                await retryCurrentTarget(
-                    "Connection paused. Say left, right, or I can’t see it.",
-                    prompts: dependencies.spokenPrompts
-                )
+                phase = .retry("Voice service paused. Use operator input, or repeat this patch.")
+                isRunning = false
+                return false
             }
         }
         return false
@@ -349,11 +399,17 @@ final class GaborTestViewModel: ObservableObject {
         isCollectingMeasurementSamples = false
         phase = .retry(message)
         HapticFeedback.warning()
-        await prompts.speakAndWait(message)
+        _ = await prompts.speakForTransition(message)
     }
 
-    private func scoreBlock(dependencies: AppDependencies, session: AppSession) async {
-        guard let completedSession = sequentialSession,
+    private func scoreBlock(
+        dependencies: AppDependencies,
+        session: AppSession,
+        generation: UUID
+    ) async {
+        guard generation == lifecycleGeneration,
+              !Task.isCancelled,
+              let completedSession = sequentialSession,
               completedSession.isComplete else {
             isRunning = false
             return
@@ -390,7 +446,8 @@ final class GaborTestViewModel: ObservableObject {
             correctCount: correct,
             outcome: outcome,
             responseSource: .voice,
-            transcript: acceptedTranscripts.joined(separator: " | ")
+            transcript: acceptedTranscripts.joined(separator: " | "),
+            quality: blockQuality(from: aggregate)
         )
         if eye == .right {
             session.activeSession.rightGaborTrials?.append(trial)
@@ -405,7 +462,12 @@ final class GaborTestViewModel: ObservableObject {
         isScoredTargetVisible = false
         switch action {
         case .test:
-            await runBlock(start: .nextContrast, dependencies: dependencies, session: session)
+            await runBlock(
+                start: .nextContrast,
+                dependencies: dependencies,
+                session: session,
+                generation: generation
+            )
         case .completed(let result):
             let evidence = eye == .right
                 ? (session.activeSession.rightGaborTrials ?? [])
@@ -423,12 +485,25 @@ final class GaborTestViewModel: ObservableObject {
             } else {
                 session.activeSession.leftGaborResult = persistedResult
             }
-            phase = .completed
-            await dependencies.spokenPrompts.speakAndWait(
-                integrity.isValid
-                    ? "\(eye.displayName) eye contrast orientation task complete."
-                    : "\(eye.displayName) eye contrast task needs repeating."
+            let disposition = GaborCompletionPolicy.disposition(
+                for: persistedResult,
+                integrityIsValid: integrity.isValid
             )
+            completionDisposition = disposition
+            phase = disposition == .reliableCompletion ? .completed : .needsRepeat
+            let outcome = await dependencies.spokenPrompts.speakForTransition(
+                disposition.spokenMessage(for: eye)
+            )
+            let expectedRoute: AppRoute = eye == .right ? .rightGaborTest : .leftGaborTest
+            guard CompletionNavigationPolicy.shouldAdvance(
+                after: outcome,
+                expectedRoute: expectedRoute,
+                currentRoute: session.path.last,
+                expectedGeneration: generation,
+                currentGeneration: lifecycleGeneration,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            if eye == .left { dependencies.sensorCoordinator.stop() }
             session.navigate(to: eye == .right ? .leftEyeInstructions : .processing)
         }
     }
@@ -445,7 +520,10 @@ final class GaborTestViewModel: ObservableObject {
         targets = []
         sequentialSession = nil
         isScoredTargetVisible = false
+        completionDisposition = nil
         phase = .moving
+        distanceFilter.reset()
+        currentDistance = nil
         targetTracker.reset()
         stabilityProgress = 0
         voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
@@ -459,6 +537,7 @@ final class GaborTestViewModel: ObservableObject {
         guard let sample, sample.faceCount == 1 else { return .findFace }
         if !sample.phoneStable { return .waitForPhone }
         if sample.luminance < 0.12 { return .addLight }
+        if gazeState != .aligned { return .lookAtCentre }
         if abs(sample.headYawDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
             || abs(sample.headPitchDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees {
             return .facePhone
@@ -472,6 +551,7 @@ final class GaborTestViewModel: ObservableObject {
               sample.faceCount == 1,
               sample.phoneStable,
               sample.luminance >= 0.12,
+              gazeState == .aligned,
               abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees,
               abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees else {
             return false
@@ -487,6 +567,192 @@ final class GaborTestViewModel: ObservableObject {
         } catch {
             return false
         }
+    }
+
+    func presentOperatorInput(using dependencies: AppDependencies) {
+        guard operatorEntryEnabled else { return }
+        activeTask?.cancel()
+        activeTask = nil
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
+        isCollectingMeasurementSamples = false
+        isRunning = false
+        isCollectingMeasurementSamples = true
+        operatorSubmissionResolved = false
+        showingOperatorInput = true
+    }
+
+    func operatorInputDidDismiss(dependencies: AppDependencies, session: AppSession) {
+        guard !operatorSubmissionResolved else { return }
+        showingOperatorInput = false
+        isCollectingMeasurementSamples = false
+        guard sequentialSession?.currentTarget != nil else {
+            restartPositioning(announcement: nil, dependencies: dependencies)
+            return
+        }
+        let generation = lifecycleGeneration
+        activeTask = Task { [weak self] in
+            guard let self else { return }
+            isRunning = true
+            guard await collectSevenAnswers(dependencies: dependencies) else {
+                isRunning = false
+                return
+            }
+            await scoreBlock(
+                dependencies: dependencies,
+                session: session,
+                generation: generation
+            )
+        }
+    }
+
+    func submitOperatorResponses(
+        _ responses: [GaborResponse],
+        dependencies: AppDependencies,
+        session: AppSession
+    ) async {
+        showingOperatorInput = false
+        operatorSubmissionResolved = true
+        isCollectingMeasurementSamples = false
+        guard responses.count == totalTargetCount,
+              targets.count == totalTargetCount else {
+            phase = .retry("Operator input requires seven answers.")
+            return
+        }
+        guard let aggregate = acceptedMeasurementQuality(session: session) else {
+            restartPositioning(
+                announcement: "Position quality was not retained. I’ll guide you back.",
+                dependencies: dependencies
+            )
+            return
+        }
+        let correct = GaborScorer.correctCount(targets: targets, responses: responses)
+        let outcome = GaborScorer.outcome(
+            correctCount: correct,
+            hasExactlySevenResponses: true
+        )
+        let trial = GaborTrial(
+            eye: eye,
+            contrast: contrast,
+            targets: targets,
+            responses: responses,
+            correctCount: correct,
+            outcome: outcome,
+            responseSource: .operatorInput,
+            transcript: nil,
+            quality: blockQuality(from: aggregate)
+        )
+        if eye == .right {
+            session.activeSession.rightGaborTrials?.append(trial)
+        } else {
+            session.activeSession.leftGaborTrials?.append(trial)
+        }
+        let action = engine.submit(trial)
+        isRunning = false
+        targets = []
+        sequentialSession = nil
+        isScoredTargetVisible = false
+        let generation = lifecycleGeneration
+        switch action {
+        case .test:
+            activeTask = Task { [weak self] in
+                await self?.runBlock(
+                    start: .nextContrast,
+                    dependencies: dependencies,
+                    session: session,
+                    generation: generation
+                )
+            }
+        case .completed(let result):
+            await complete(
+                result: result,
+                dependencies: dependencies,
+                session: session,
+                generation: generation
+            )
+        }
+    }
+
+    func sensorStreamInvalidated(using dependencies: AppDependencies) {
+        lifecycleGeneration = UUID()
+        activeTask?.cancel()
+        activeTask = nil
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
+        blockSamples.removeAll(keepingCapacity: false)
+        distanceFilter.reset()
+        targetTracker.reset()
+        gazeTracker.reset()
+        gazeState = .unavailable
+        mostRecentSample = nil
+        currentDistance = nil
+        restartPositioning(
+            announcement: "Tracking paused. I’ll guide you back to forty centimetres.",
+            dependencies: dependencies
+        )
+    }
+
+    private func acceptedMeasurementQuality(session: AppSession) -> BlockMeasurementQuality? {
+        let aggregate = BlockMeasurementQualityEngine.evaluate(
+            samples: blockSamples,
+            targetDistanceMetres: targetDistance,
+            targetToleranceMetres: DistanceGuidanceEngine.exitTolerance(for: targetDistance),
+            thresholds: session.activeSession.deviceProfile?.qualityThresholds ?? .conservative
+        )
+        return aggregate.isAccepted ? aggregate : nil
+    }
+
+    private func blockQuality(from aggregate: BlockMeasurementQuality) -> BlockQuality {
+        BlockQuality(
+            trackingCoverage: aggregate.trackingCoverage,
+            phoneStable: !aggregate.issues.contains(.phoneMoved),
+            headPoseValid: !aggregate.issues.contains(.headPose),
+            distanceStable: !aggregate.issues.contains(where: {
+                [.insufficientSamples, .distanceUnavailable, .distanceOffTarget, .distanceUnstable].contains($0)
+            }),
+            audioLevelAdequate: true,
+            targetGeometryValid: true,
+            gazeCoverage: aggregate.gazeAlignedCoverage,
+            discardReasons: aggregate.blockDiscardReasons
+        )
+    }
+
+    private func complete(
+        result: GaborScreeningResult,
+        dependencies: AppDependencies,
+        session: AppSession,
+        generation: UUID
+    ) async {
+        guard generation == lifecycleGeneration, !Task.isCancelled else { return }
+        let evidence = eye == .right
+            ? (session.activeSession.rightGaborTrials ?? [])
+            : (session.activeSession.leftGaborTrials ?? [])
+        let integrity = GaborResultIntegrityValidator.validate(result, against: evidence)
+        let persisted = integrity.isValid
+            ? result
+            : GaborScreeningResult(eye: eye, status: .unreliableMeasurement, responseConsistency: .poor)
+        if eye == .right { session.activeSession.rightGaborResult = persisted }
+        else { session.activeSession.leftGaborResult = persisted }
+        let disposition = GaborCompletionPolicy.disposition(
+            for: persisted,
+            integrityIsValid: integrity.isValid
+        )
+        completionDisposition = disposition
+        phase = disposition == .reliableCompletion ? .completed : .needsRepeat
+        let outcome = await dependencies.spokenPrompts.speakForTransition(
+            disposition.spokenMessage(for: eye)
+        )
+        let expectedRoute: AppRoute = eye == .right ? .rightGaborTest : .leftGaborTest
+        guard CompletionNavigationPolicy.shouldAdvance(
+            after: outcome,
+            expectedRoute: expectedRoute,
+            currentRoute: session.path.last,
+            expectedGeneration: generation,
+            currentGeneration: lifecycleGeneration,
+            taskIsCancelled: Task.isCancelled
+        ) else { return }
+        if eye == .left { dependencies.sensorCoordinator.stop() }
+        session.navigate(to: eye == .right ? .leftEyeInstructions : .processing)
     }
 
     private static func randomOrientations() -> [GaborOrientation] {

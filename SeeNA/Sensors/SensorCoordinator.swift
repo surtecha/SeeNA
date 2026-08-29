@@ -68,18 +68,20 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var latestSample: DistanceSample?
     @Published private(set) var isRunning = false
     @Published private(set) var failureMessage: String?
+    @Published private(set) var streamEpoch: UInt64 = 0
 
     let motion = MotionStationarityService()
     private let profileRegistry: DeviceProfileRegistry
     private var session: ARSession?
     private let useMockData: Bool
     private var fusion = DistanceFusionEngine()
+    private var epochState = SensorStreamEpochState()
     private var trackingFrames: [Bool] = []
     private var mockTask: Task<Void, Never>?
     private var smoothedGaze: GazeAlignment?
 #if DEBUG
     private var simulatorAutomationEnabled = false
-    private var simulatorTargetDistance = 0.40
+    private var simulatorDistance = ExclusiveDistanceTargetController()
 #endif
 
     init(profileRegistry: DeviceProfileRegistry, useMockData: Bool = false) {
@@ -107,6 +109,9 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     var faceTrackingSupported: Bool { ARFaceTrackingConfiguration.isSupported }
+    var supportsSecondFaceDetection: Bool {
+        useMockData || ARFaceTrackingConfiguration.supportedNumberOfTrackedFaces >= 2
+    }
     var motionSupported: Bool { motion.isAvailable }
 
     func start() {
@@ -136,9 +141,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
             activeSession = newSession
         }
         motion.start()
-        let configuration = ARFaceTrackingConfiguration()
-        configuration.isLightEstimationEnabled = true
-        configuration.maximumNumberOfTrackedFaces = 1
+        let configuration = faceTrackingConfiguration()
         activeSession.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         isRunning = true
     }
@@ -152,16 +155,56 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         isRunning = false
     }
 
+    /// Pausing the app invalidates any active measurement block before the
+    /// underlying camera/motion streams stop.
+    func suspend() {
+        invalidateStreamState()
+        stop()
+    }
+
+    /// Clears all person-specific state before another participant starts.
+    func resetForNewScreening() {
+        stop()
+        session = nil
+        failureMessage = nil
+        invalidateStreamState()
+#if DEBUG
+        simulatorDistance.reset()
+#endif
+    }
+
     func lockPhoneReference() {
         motion.lockReference()
     }
 
     /// Lets the DEBUG mock stream follow each requested screening distance.
     /// The production stream has no writable target and remains AR-driven.
-    func setSimulatorTargetDistance(_ distance: Double) {
+    func claimSimulatorDistanceOwner() -> UUID? {
 #if DEBUG
-        guard simulatorAutomationEnabled, distance.isFinite, distance > 0 else { return }
-        simulatorTargetDistance = distance
+        guard simulatorAutomationEnabled else { return nil }
+        let token = simulatorDistance.claim()
+        fusion = DistanceFusionEngine()
+        latestSample = nil
+        return token
+#else
+        return nil
+#endif
+    }
+
+    func setSimulatorTargetDistance(_ distance: Double, owner: UUID?) {
+#if DEBUG
+        guard simulatorAutomationEnabled else { return }
+        let previous = simulatorDistance.targetDistanceMetres
+        guard simulatorDistance.update(distance, owner: owner),
+              abs(previous - distance) > 0.000_1 else { return }
+        fusion = DistanceFusionEngine()
+        latestSample = nil
+#endif
+    }
+
+    func releaseSimulatorDistanceOwner(_ owner: UUID?) {
+#if DEBUG
+        _ = simulatorDistance.release(owner: owner)
 #endif
     }
 
@@ -179,7 +222,10 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         guard let frame = session.currentFrame else { return }
-        let faces = anchors.compactMap { $0 as? ARFaceAnchor }.filter(\.isTracked)
+        // The callback array contains only anchors updated in this delivery.
+        // Count every currently active face from the frame so a stationary
+        // second person cannot disappear from the safety gate.
+        let faces = frame.anchors.compactMap { $0 as? ARFaceAnchor }.filter(\.isTracked)
         trackingFrames.append(!faces.isEmpty)
         if trackingFrames.count > 90 { trackingFrames.removeFirst(trackingFrames.count - 90) }
         let coverage = trackingFrames.isEmpty ? 0 : Double(trackingFrames.filter { $0 }.count) / Double(trackingFrames.count)
@@ -264,19 +310,20 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didFailWithError error: Error) {
         failureMessage = "Face tracking stopped. Reposition the phone and try again."
+        invalidateStreamState()
+        motion.stop()
         isRunning = false
     }
 
     func sessionWasInterrupted(_ session: ARSession) {
         failureMessage = "Face tracking was interrupted. The active block was discarded."
+        invalidateStreamState()
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
         failureMessage = nil
         guard isRunning, !useMockData else { return }
-        let configuration = ARFaceTrackingConfiguration()
-        configuration.isLightEstimationEnabled = true
-        configuration.maximumNumberOfTrackedFaces = 1
+        let configuration = faceTrackingConfiguration()
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
     }
 
@@ -290,7 +337,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
 #if DEBUG
                 if simulatorAutomationEnabled {
                     distance = SimulatorVoiceAutomation.distance(
-                        target: simulatorTargetDistance,
+                        target: simulatorDistance.targetDistanceMetres,
                         tick: index
                     )
                 } else {
@@ -318,7 +365,7 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
                     interEyePixels: 210
                 )
                 index += 1
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
     }
@@ -341,6 +388,24 @@ final class SensorCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         )
         smoothedGaze = smoothed
         return smoothed
+    }
+
+    private func faceTrackingConfiguration() -> ARFaceTrackingConfiguration {
+        let configuration = ARFaceTrackingConfiguration()
+        configuration.isLightEstimationEnabled = true
+        configuration.maximumNumberOfTrackedFaces = min(
+            2,
+            ARFaceTrackingConfiguration.supportedNumberOfTrackedFaces
+        )
+        return configuration
+    }
+
+    private func invalidateStreamState() {
+        streamEpoch = epochState.invalidate()
+        latestSample = nil
+        trackingFrames.removeAll(keepingCapacity: false)
+        smoothedGaze = nil
+        fusion = DistanceFusionEngine()
     }
 
     private static func eulerAnglesDegrees(_ matrix: simd_float4x4) -> (yaw: Double, pitch: Double) {

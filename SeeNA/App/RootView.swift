@@ -25,6 +25,12 @@ struct RootView: View {
         .onReceive(dependencies.sensorCoordinator.$latestSample) { sample in
             session.sensorState = sample
         }
+        .onChange(of: session.path) { oldPath, newPath in
+            if !oldPath.isEmpty, newPath.isEmpty, session.didTapStart {
+                dependencies.resetForNewScreening()
+                session.abandonJourney()
+            }
+        }
     }
 
     @ViewBuilder
@@ -36,10 +42,19 @@ struct RootView: View {
             PermissionsView(
                 model: PermissionsViewModel(
                     audioRecorder: dependencies.audioRecorder,
-                    prompts: dependencies.spokenPrompts
+                    prompts: dependencies.spokenPrompts,
+                    guideDescription: "Natural female guide, with a secure network voice when available and an on-device fallback"
                 )
             )
-        case .deviceCheck: DeviceCheckView()
+        case .deviceCheck:
+            DeviceCheckView(
+                model: DeviceCheckViewModel(
+                    registry: dependencies.profileRegistry,
+                    sensors: dependencies.sensorCoordinator,
+                    prompts: dependencies.spokenPrompts,
+                    network: dependencies.network
+                )
+            )
         case .phoneSetup:
             PhoneSetupView(
                 model: PhoneSetupViewModel(
@@ -61,9 +76,27 @@ struct RootView: View {
         case .leftEyeInstructions: EyeInstructionsView(eye: .left)
         case .leftEyeTest: EyeTestView(eye: .left)
         case .leftGaborTest: GaborTestView(eye: .left)
-        case .processing: ProcessingView()
-        case .results: ResultsView()
+        case .processing:
+            ProcessingView(
+                model: ProcessingViewModel(
+                    store: dependencies.sessionStore,
+                    backend: dependencies.backend,
+                    sensors: dependencies.sensorCoordinator,
+                    brightness: dependencies.brightness
+                )
+            )
+        case .results:
+            ResultsView(
+                model: ResultsViewModel(
+                    screening: session.activeSession,
+                    cachedExplanation: session.cachedExplanation
+                )
+            )
         case .evidence: EvidenceView()
+        case .history:
+            SessionHistoryView(
+                model: SessionHistoryViewModel(store: dependencies.sessionStore)
+            )
         }
     }
 }

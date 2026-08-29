@@ -3,6 +3,8 @@ import SwiftUI
 struct ScreeningIntegritySummary {
     let right: ResultIntegrityValidation?
     let left: ResultIntegrityValidation?
+    let rightGabor: GaborResultIntegrityValidation?
+    let leftGabor: GaborResultIntegrityValidation?
 
     init(screening: ScreeningSession) {
         right = screening.rightEyeResult.map {
@@ -19,17 +21,27 @@ struct ScreeningIntegritySummary {
                 profile: screening.deviceProfile
             )
         }
+        rightGabor = screening.rightGaborResult.map {
+            GaborResultIntegrityValidator.validate($0, against: screening.rightGaborTrials ?? [])
+        }
+        leftGabor = screening.leftGaborResult.map {
+            GaborResultIntegrityValidator.validate($0, against: screening.leftGaborTrials ?? [])
+        }
     }
 
     var allPresentResultsValid: Bool {
-        guard let right, let left else { return false }
-        return right.isValid && left.isValid
+        guard let right, let left, let rightGabor, let leftGabor else { return false }
+        return right.isValid && left.isValid && rightGabor.isValid && leftGabor.isValid
     }
 
     var issueCount: Int {
-        [right, left]
+        let landoltIssues = [right, left]
             .compactMap { $0 }
             .reduce(0) { $0 + $1.issues.count }
+        let gaborIssues = [rightGabor, leftGabor]
+            .compactMap { $0 }
+            .reduce(0) { $0 + $1.issues.count }
+        return landoltIssues + gaborIssues
     }
 
     func validation(for eye: Eye) -> ResultIntegrityValidation? {
@@ -37,29 +49,42 @@ struct ScreeningIntegritySummary {
     }
 }
 
+enum ResultVerificationState: Equatable {
+    case reviewNeeded
+    case numericConsistent
+    case numericNotApplicable
+}
+
 struct ResultVerificationBadge: View {
-    let needsReview: Bool
+    let state: ResultVerificationState
     let issueCount: Int
 
     private var title: String {
-        needsReview ? "Review needed" : "Math consistent"
+        switch state {
+        case .reviewNeeded: return "Review needed"
+        case .numericConsistent: return "Screening checks passed"
+        case .numericNotApplicable: return "Screening checks passed"
+        }
     }
 
     private var detail: String {
-        if needsReview, issueCount > 0 {
-            return "\(issueCount) internal consistency \(issueCount == 1 ? "check needs" : "checks need") review. Not clinical validation."
+        if state == .reviewNeeded, issueCount > 0 {
+            return "\(issueCount) screening \(issueCount == 1 ? "check needs" : "checks need") review."
         }
-        if needsReview {
-            return "The explanation consistency check needs review. Not clinical validation."
+        if state == .reviewNeeded {
+            return "The screening summary needs review."
         }
-        return "On-device values passed internal consistency checks. Not clinical validation."
+        if state == .numericConsistent {
+            return "Your completed tasks passed the screening checks."
+        }
+        return "Your completed tasks passed the screening checks."
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: needsReview ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+            Image(systemName: state == .reviewNeeded ? "exclamationmark.circle.fill" : "info.circle.fill")
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(needsReview ? SEENATheme.warning : SEENATheme.ink)
+                .foregroundStyle(state == .reviewNeeded ? SEENATheme.warning : SEENATheme.ink)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)

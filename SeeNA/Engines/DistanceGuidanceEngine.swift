@@ -9,6 +9,7 @@ enum DistanceGuidanceCue: Equatable, Hashable, Sendable {
     case findFace
     case waitForPhone
     case facePhone
+    case lookAtCentre
     case addLight
 
     var displayText: String {
@@ -19,6 +20,7 @@ enum DistanceGuidanceCue: Equatable, Hashable, Sendable {
         case .findFace: return "MOVE INTO VIEW"
         case .waitForPhone: return "KEEP PHONE STILL"
         case .facePhone: return "FACE THE PHONE"
+        case .lookAtCentre: return "LOOK AT THE CENTRE"
         case .addLight: return "ADD MORE LIGHT"
         }
     }
@@ -35,6 +37,7 @@ enum DistanceGuidanceCue: Equatable, Hashable, Sendable {
         case .findFace: return "Move into the centre of the camera view."
         case .waitForPhone: return "Wait for the phone to settle."
         case .facePhone: return "Face the phone."
+        case .lookAtCentre: return "Look at the centre of the screen."
         case .addLight: return "Turn on another light."
         }
     }
@@ -47,6 +50,7 @@ enum DistanceGuidanceCue: Equatable, Hashable, Sendable {
             findFace.spokenText,
             waitForPhone.spokenText,
             facePhone.spokenText,
+            lookAtCentre.spokenText,
             addLight.spokenText,
             "Walk backwards slowly. I will tell you when to stop.",
             "Walk towards the phone. I will tell you when to stop.",

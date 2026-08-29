@@ -168,16 +168,15 @@ private struct SingleTargetStage: View {
                     NonScoredTargetLocator(reduceMotion: reduceMotion)
                         .transition(.opacity)
                 } else if let geometry, let target {
-                    ScoredTargetWithLocator(
+                    ScoredPOCTarget(
                         geometry: geometry,
-                        target: target,
-                        showsLocator: phase == .recording
+                        target: target
                     )
                         .id(trialIndex)
                         .transition(targetTransition)
                         .accessibilityLabel("Circle \(trialIndex + 1) of \(totalTrialCount)")
                         .accessibilityHint(
-                            "Only the small centre C is scored. The large complete ring is a non-scored guide. Say up, down, left, right, or I can't see it."
+                            "One enlarged C is shown. Say up, down, left, right, or I can't see it."
                         )
                 } else {
                     ProgressView()
@@ -239,48 +238,21 @@ private struct SingleTargetStage: View {
     }
 }
 
-/// Keeps the clinical C unchanged while a symmetric, complete guide ring makes
-/// the centre of a phone screen easy to find from the screening position.
-private struct ScoredTargetWithLocator: View {
+/// The one immutable, enlarged phone-POC target used by the live answer and
+/// frozen evidence. It is requested/computed geometry, not a clinical target.
+private struct ScoredPOCTarget: View {
     let geometry: OptotypeGeometry
     let target: OptotypeDirection
-    let showsLocator: Bool
 
     var body: some View {
-        ZStack {
-            LandoltSingleTargetView(geometry: geometry, direction: target)
-
-            if showsLocator {
-                RecordingTargetLocator()
-                    .transition(.opacity)
-            }
-        }
+        LandoltSingleTargetView(geometry: geometry, direction: target)
         .accessibilityElement(children: .ignore)
-    }
-}
-
-private struct RecordingTargetLocator: View {
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(SEENATheme.ink.opacity(0.22), lineWidth: 3)
-                .frame(width: 210, height: 210)
-
-            Text("GUIDE RING · NOT SCORED")
-                .font(.caption2.weight(.bold))
-                .tracking(0.7)
-                .foregroundStyle(SEENATheme.secondaryInk)
-                .offset(y: 124)
-        }
-        .frame(width: 260, height: 260)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 
 /// A large, directionless locator shown before the scored Landolt C. It makes
 /// the phone centre easy to find without leaking an answer or contaminating the
-/// standard five-arcminute target used by the measurement engine.
+/// enlarged phone-POC target used by the live journey.
 private struct NonScoredTargetLocator: View {
     let reduceMotion: Bool
     @State private var isBreathing = false
