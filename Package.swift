@@ -34,6 +34,7 @@ let package = Package(
                 "Models/DomainModels.swift",
                 "Engines/MeasurementEngines.swift",
                 "Engines/GaborContrastEngine.swift",
+                "Engines/MotionStationarityEvaluator.swift",
                 "Engines/ThresholdSearchEngine.swift"
             ]
         ),

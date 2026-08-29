@@ -119,7 +119,7 @@ final class PhoneSetupViewModel {
     var instruction: String {
         guard sample != nil else { return "Finding you" }
         if !faceReady { return "One face in frame" }
-        if !phoneReady { return "Stop touching the phone" }
+        if !phoneReady { return "Let the phone settle" }
         if !gazeReady { return "Look at the centre" }
         if !lightReady { return "Add more light" }
         return isLocked ? "Position locked" : "Ready to lock"
@@ -153,7 +153,7 @@ final class PhoneSetupViewModel {
 
         if isReady, !isLocked, !isAdvancing {
             readySince = readySince ?? Date()
-            if Date().timeIntervalSince(readySince ?? Date()) >= 1 {
+            if Date().timeIntervalSince(readySince ?? Date()) >= 0.6 {
                 isAdvancing = true
                 sensors.lockPhoneReference()
                 isLocked = true

@@ -4,40 +4,21 @@ import CoreMotion
 import Foundation
 import UIKit
 
-struct MotionSnapshot: Sendable {
-    let attitudeDriftDegrees: Double
-    let accelerationRMS: Double
-    let rotationRateMagnitude: Double
-    let stableDuration: TimeInterval
-
-    var isStable: Bool {
-        attitudeDriftDegrees < 1.5
-            && accelerationRMS < 0.02
-            && rotationRateMagnitude < 0.08
-            && stableDuration >= 1
-    }
-
-    static let unavailable = MotionSnapshot(
-        attitudeDriftDegrees: .infinity,
-        accelerationRMS: .infinity,
-        rotationRateMagnitude: .infinity,
-        stableDuration: 0
-    )
-}
+typealias MotionSnapshot = MotionStationarityReading
 
 @MainActor
 final class MotionStationarityService: ObservableObject {
     @Published private(set) var snapshot = MotionSnapshot.unavailable
 
     private let manager = CMMotionManager()
-    private var referenceQuaternion: CMQuaternion?
-    private var stableSince: Date?
-    private var accelerationSquaredWindow: [Double] = []
+    private var evaluator = MotionStationarityEvaluator()
 
     var isAvailable: Bool { manager.isDeviceMotionAvailable }
 
     func start() {
         guard manager.isDeviceMotionAvailable else { return }
+        evaluator.reset()
+        snapshot = .unavailable
         manager.deviceMotionUpdateInterval = 1.0 / 30.0
         manager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] motion, _ in
             guard let self, let motion else { return }
@@ -46,56 +27,39 @@ final class MotionStationarityService: ObservableObject {
     }
 
     func lockReference() {
-        referenceQuaternion = manager.deviceMotion?.attitude.quaternion
-        stableSince = nil
-        accelerationSquaredWindow.removeAll(keepingCapacity: true)
+        let motion = manager.deviceMotion
+        evaluator.lock(
+            attitude: motion.map { Self.attitude(from: $0.attitude.quaternion) },
+            timestamp: motion?.timestamp ?? ProcessInfo.processInfo.systemUptime
+        )
     }
 
     func stop() {
         manager.stopDeviceMotionUpdates()
-        referenceQuaternion = nil
-        stableSince = nil
-        accelerationSquaredWindow.removeAll(keepingCapacity: true)
+        evaluator.reset()
         snapshot = .unavailable
     }
 
     private func consume(_ motion: CMDeviceMotion) {
-        if referenceQuaternion == nil { referenceQuaternion = motion.attitude.quaternion }
-        let drift = Self.angularDifferenceDegrees(referenceQuaternion, motion.attitude.quaternion)
         let instantaneousAccelerationSquared =
             pow(motion.userAcceleration.x, 2)
                 + pow(motion.userAcceleration.y, 2)
                 + pow(motion.userAcceleration.z, 2)
-        accelerationSquaredWindow.append(instantaneousAccelerationSquared)
-        if accelerationSquaredWindow.count > 30 {
-            accelerationSquaredWindow.removeFirst(accelerationSquaredWindow.count - 30)
-        }
-        let accelerationRMS = sqrt(
-            accelerationSquaredWindow.reduce(0, +) / Double(max(1, accelerationSquaredWindow.count))
-        )
         let rotation = sqrt(
             pow(motion.rotationRate.x, 2)
                 + pow(motion.rotationRate.y, 2)
                 + pow(motion.rotationRate.z, 2)
         )
-        let instantStable = drift < 1.5 && accelerationRMS < 0.02 && rotation < 0.08
-        if instantStable {
-            stableSince = stableSince ?? Date()
-        } else {
-            stableSince = nil
-        }
-        snapshot = MotionSnapshot(
-            attitudeDriftDegrees: drift,
-            accelerationRMS: accelerationRMS,
+        snapshot = evaluator.consume(
+            attitude: Self.attitude(from: motion.attitude.quaternion),
+            accelerationSquared: instantaneousAccelerationSquared,
             rotationRateMagnitude: rotation,
-            stableDuration: stableSince.map { Date().timeIntervalSince($0) } ?? 0
+            timestamp: motion.timestamp
         )
     }
 
-    private static func angularDifferenceDegrees(_ lhs: CMQuaternion?, _ rhs: CMQuaternion) -> Double {
-        guard let lhs else { return .infinity }
-        let dot = abs(lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z + lhs.w * rhs.w)
-        return 2 * acos(min(1, max(-1, dot))) * 180 / .pi
+    private static func attitude(from value: CMQuaternion) -> MotionAttitude {
+        MotionAttitude(x: value.x, y: value.y, z: value.z, w: value.w)
     }
 }
 

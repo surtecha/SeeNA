@@ -175,6 +175,69 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(estimate.corrected), 0.8, accuracy: 0.000_001)
     }
 
+    func testStationarityRebasesAfterPlacementThenRecognisesStillPhone() {
+        var evaluator = MotionStationarityEvaluator()
+        let held = attitude(rotationDegrees: 0)
+        let placed = attitude(rotationDegrees: 75)
+
+        _ = evaluator.consume(
+            attitude: held,
+            accelerationSquared: 0.04,
+            rotationRateMagnitude: 0.6,
+            timestamp: 0
+        )
+        for frame in 1...18 {
+            _ = evaluator.consume(
+                attitude: placed,
+                accelerationSquared: 0.04,
+                rotationRateMagnitude: 0.6,
+                timestamp: Double(frame) / 30
+            )
+        }
+
+        var reading = MotionStationarityReading.unavailable
+        for frame in 19...75 {
+            reading = evaluator.consume(
+                attitude: placed,
+                accelerationSquared: 0.000_025,
+                rotationRateMagnitude: 0.005,
+                timestamp: Double(frame) / 30
+            )
+        }
+
+        XCTAssertTrue(reading.isStable)
+        XCTAssertLessThan(reading.attitudeDriftDegrees, 0.01)
+    }
+
+    func testLockedStationarityNeverRebasesAfterPhoneMoves() {
+        var evaluator = MotionStationarityEvaluator()
+        let resting = attitude(rotationDegrees: 0)
+        let moved = attitude(rotationDegrees: 5)
+
+        for frame in 0...30 {
+            _ = evaluator.consume(
+                attitude: resting,
+                accelerationSquared: 0.000_025,
+                rotationRateMagnitude: 0.005,
+                timestamp: Double(frame) / 30
+            )
+        }
+        evaluator.lock(attitude: resting, timestamp: 1.1)
+
+        var reading = MotionStationarityReading.unavailable
+        for frame in 34...100 {
+            reading = evaluator.consume(
+                attitude: moved,
+                accelerationSquared: 0.000_025,
+                rotationRateMagnitude: 0.005,
+                timestamp: Double(frame) / 30
+            )
+        }
+
+        XCTAssertFalse(reading.isStable)
+        XCTAssertEqual(reading.attitudeDriftDegrees, 5, accuracy: 0.001)
+    }
+
     func testGoodQualityBlockPassesGate() {
         let quality = QualityGateEngine.evaluate(
             sample: sample(
@@ -343,5 +406,10 @@ final class MeasurementEngineTests: XCTestCase {
             responseSource: .voice,
             transcript: nil
         )
+    }
+
+    private func attitude(rotationDegrees: Double) -> MotionAttitude {
+        let halfAngle = rotationDegrees * .pi / 360
+        return MotionAttitude(x: 0, y: 0, z: sin(halfAngle), w: cos(halfAngle))
     }
 }
