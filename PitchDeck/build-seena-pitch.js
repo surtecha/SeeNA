@@ -4,10 +4,8 @@ const pptxgen = require("pptxgenjs");
 const ROOT = path.resolve(__dirname, "..");
 const OUT = path.join(__dirname, "SeeNA-Syncs-Hackathon-2026-Pitch.pptx");
 const HERO = path.join(ROOT, "docs/assets/seena-hero.png");
-const CLOSING = path.join(ROOT, "DesignAssets/SeeNA-Pitch-Closing-Frame-v2.png");
 const APP_ICON = path.join(ROOT, "SeeNA/Assets.xcassets/AppIcon.appiconset/SEENA-AppIcon.png");
 const DEMO_GIF = path.join(__dirname, "SeeNA-Demo-60s-visible.gif");
-const PRODUCT_IMPACT = path.join(ROOT, "DesignAssets/SeeNA-Devpost-Thumbnail.png");
 const SCREENS = {
   start: path.join(ROOT, "docs/assets/screens/01-start.jpg"),
   landolt: path.join(ROOT, "docs/assets/screens/02-landolt-c.jpg"),
@@ -172,33 +170,54 @@ function addNotes(slide, timing, script) {
     x: 0.8, y: 6.67, w: 3.4, h: 0.22,
     fontSize: 10.5, bold: true, color: C.lightGrey, charSpacing: 0.8,
   });
-  addNotes(slide, "0:00 to 0:15", "Most eye tests begin in a clinic. SeeNA begins with the iPhone already in your hand. It is a voice-guided vision screening companion built to make the first eye check simple.");
+  addNotes(slide, "0:00 to 0:15", "Most eye checks begin with a clinic appointment. SeeNA begins with the iPhone already in your hand. It is a voice-guided vision screening companion designed to make the first step simple, independent and understandable.");
 }
 
 // Slide 2: Problem
 {
   const slide = pptx.addSlide();
-  addImageCover(slide, CLOSING, 0, 0, 13.333, 7.5, "Older adult overlooking a remote community connected by illuminated blocks");
-  slide.addShape(SH.rect, {
-    x: 0, y: 0, w: 7.3, h: 7.5,
-    fill: { color: C.black, transparency: 18 }, line: { color: C.black, transparency: 100 },
+  slide.background = { color: C.black };
+  addSectionLabel(slide, "The missing first step", C.lightGrey);
+  addText(slide, "For many people, the first eye check is already out of reach.", {
+    x: 0.72, y: 1.02, w: 10.6, h: 1.18,
+    fontSize: 39, bold: true, color: C.white,
   });
-  addSectionLabel(slide, "The missing first step", "E7D4BC");
-  addText(slide, "The first eye check\nshould not depend\non distance.", {
-    x: 0.72, y: 1.18, w: 5.65, h: 2.3,
-    fontSize: 42, bold: true, color: C.white, breakLine: true,
-    lineSpacingMultiple: 0.9,
+  addText(slide, "A simple need becomes a chain of barriers.", {
+    x: 0.75, y: 2.45, w: 5.5, h: 0.36,
+    fontSize: 18, color: C.lightGrey,
   });
-  addText(slide, "Age, access and complexity can turn a simple check into a barrier.", {
-    x: 0.75, y: 3.85, w: 4.9, h: 0.66,
-    fontSize: 18, color: "ECECEC",
+
+  const barriers = [
+    ["01", "DISTANCE", "The nearest check may be far away."],
+    ["02", "DEPENDENCE", "Travel and unfamiliar tools can require help."],
+    ["03", "DELAY", "Without a first signal, action is postponed."],
+  ];
+  barriers.forEach((item, i) => {
+    const x = 0.74 + i * 4.05;
+    const isKey = i === 1;
+    slide.addShape(SH.roundRect, {
+      x, y: 3.38, w: 3.68, h: 2.34,
+      rectRadius: 0.08,
+      fill: { color: isKey ? C.gold : "111111" },
+      line: { color: isKey ? C.gold : "303030", width: 1 },
+    });
+    addText(slide, item[0], {
+      x: x + 0.28, y: 3.68, w: 0.55, h: 0.28,
+      fontSize: 11, bold: true, color: isKey ? C.black : C.gold,
+    });
+    addText(slide, item[1], {
+      x: x + 0.28, y: 4.18, w: 3.05, h: 0.38,
+      fontSize: 22, bold: true, color: isKey ? C.black : C.white,
+      charSpacing: 0.7,
+    });
+    addText(slide, item[2], {
+      x: x + 0.28, y: 4.78, w: 2.98, h: 0.55,
+      fontSize: 13, color: isKey ? "292929" : C.lightGrey,
+      valign: "top",
+    });
   });
-  slide.addShape(SH.line, {
-    x: 0.75, y: 5.22, w: 1.1, h: 0,
-    line: { color: C.gold, width: 4 },
-  });
-  addPageNumber(slide, 2, "D8C4AB");
-  addNotes(slide, "0:15 to 0:45", "For many older adults and people in remote communities, eye care is not a simple appointment. Distance, transport, confusing interfaces and needing someone else to help can become missing blocks. We asked: could the phone connect that first block without pretending to replace a clinician? That became SeeNA.");
+  addPageNumber(slide, 2, C.lightGrey);
+  addNotes(slide, "0:15 to 0:40", "For an older person or someone in a remote community, distance, transport, confusing interfaces or needing another person can turn a simple check into a chain of barriers. People delay action not because vision does not matter, but because the first step is hard to reach. We built SeeNA to reconnect that missing block without pretending to replace an optometrist.");
 }
 
 // Slide 3: Product reveal
@@ -247,7 +266,7 @@ function addNotes(slide, timing, script) {
   addPhone(slide, SCREENS.start, 8.14, 0.78, 2.42, 5.27, "SeeNA start screen");
   addPill(slide, "VOICE STARTS AFTER TAP", 7.58, 6.26, 3.55, C.black, C.white, C.black);
   addPageNumber(slide, 3);
-  addNotes(slide, "0:45 to 1:10", "The experience is deliberately simple. Press Start. SeeNA speaks every step, uses the front sensors to help the person get into position, then presents one large target at a time. The user answers naturally by voice, including ‘I cannot see it.’ No charts, typing or technical setup.");
+  addNotes(slide, "0:40 to 0:55", "Using SeeNA starts with one tap. From there, the app speaks every instruction, guides positioning with the front sensors, shows one large target at a time and waits for a natural voice answer. No chart, no typing and no technical setup.");
 }
 
 // Slide 4: Visible one-minute demo
@@ -266,7 +285,7 @@ function addNotes(slide, timing, script) {
     sizing: { type: "contain", w: 3.21, h: 6.64 },
     altText: "Animated 60-second SeeNA product walkthrough",
   });
-  addPill(slide, "60 SECOND LIVE WALKTHROUGH", 4.86, 0.68, 3.05, C.gold, C.black, C.gold);
+  addPill(slide, "60 SECOND PRODUCT WALKTHROUGH", 4.86, 0.68, 3.32, C.gold, C.black, C.gold);
   addText(slide, "The complete\nSeeNA journey.", {
     x: 4.84, y: 1.52, w: 6.7, h: 1.48,
     fontSize: 45, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.9,
@@ -284,12 +303,12 @@ function addNotes(slide, timing, script) {
       slide.addShape(SH.line, { x: 5.55, y: y + 0.55, w: 4.7, h: 0, line: { color: "303030", width: 1 } });
     }
   });
-  addText(slide, "The walkthrough plays automatically in Slide Show mode.", {
+  addText(slide, "One minute, from Start to a reviewable result.", {
     x: 4.9, y: 6.48, w: 5.7, h: 0.28,
     fontSize: 13, color: C.lightGrey,
   });
   addPageNumber(slide, 4, C.lightGrey);
-  addNotes(slide, "1:10 to 2:10", "Here is the complete flow. After Start, SeeNA checks distance, gaze, lighting and stillness, guiding the user with human instructions. Once positioned, it counts down and begins. The first task is Landolt C: the person says where the circle opens. The second is a Gabor pattern: they say left or right. Each eye is screened separately, and the target waits for the answer. At the end, SeeNA returns an estimated screening result for each eye, explains it in plain language and lets the user inspect every prompt, correct answer and response. The goal is not to make a diagnosis from a phone. It is to provide a clear first signal and a better reason to seek a complete eye examination.");
+  addNotes(slide, "0:55 to 1:55", "Presenter pauses. The embedded one-minute walkthrough and its voice overview play without additional narration.");
 }
 
 // Slide 5: UX and evidence
@@ -326,7 +345,7 @@ function addNotes(slide, timing, script) {
     });
   });
   addPageNumber(slide, 5);
-  addNotes(slide, "2:10 to 2:45", "Every design decision supports independence. Large targets remain visible at a practical distance. Voice begins only after Start. Prompts do not overlap or cut each other off. Positioning allows natural human movement. If the target is not visible, SeeNA accepts that as useful evidence instead of forcing a guess. Results are readable, and every answer remains reviewable.");
+  addNotes(slide, "1:55 to 2:25", "What you saw is deliberate. Landolt C asks where the circle opens. Gabor asks which way the pattern tilts. Each eye is screened separately. The target never advances before an answer, and ‘I cannot see it’ is accepted as evidence instead of being treated as an error. At the end, the user receives a clear screening estimate and can review every prompt, correct answer and response.");
 }
 
 // Slide 6: Trust architecture, expressed through the product
@@ -367,31 +386,50 @@ function addNotes(slide, timing, script) {
     });
   });
   addPageNumber(slide, 6, C.lightGrey);
-  addNotes(slide, "2:45 to 3:20", "Trust comes from separating screening from explanation. TrueDepth and motion signals enforce quality gates. Landolt C and Gabor responses are scored deterministically on the iPhone. OpenAI transcription converts speech to text, and GPT-5.6 Luna explains the result in plain language under a strict schema. AI never creates or changes the numeric estimate. Raw camera frames, face meshes and biometric data are not sent to OpenAI.");
+  addNotes(slide, "2:25 to 3:05", "The architecture separates measurement from explanation. TrueDepth, motion, lighting, gaze and stillness checks run on the device and protect result quality. Landolt C and Gabor responses are scored deterministically on the iPhone. OpenAI transcription converts the spoken answer to text, and GPT-5.6 Luna explains the finished result in plain language through a constrained schema. AI never creates or changes the numeric estimate. Raw camera frames and face-mesh data are not sent to OpenAI.");
 }
 
-// Slide 7: Product-focused impact
+// Slide 7: Product-focused impact using only real app screens
 {
   const slide = pptx.addSlide();
-  addImageCover(slide, PRODUCT_IMPACT, 0, 0, 13.333, 7.5, "SeeNA product mark and iPhone on a black background");
-  slide.addShape(SH.rect, {
-    x: 0, y: 0, w: 7.0, h: 7.5,
-    fill: { color: "000000", transparency: 15 }, line: { color: "000000", transparency: 100 },
-  });
+  slide.background = { color: C.black };
   addSectionLabel(slide, "Why it matters", C.lightGrey);
-  addText(slide, "Access without\ncomplexity.", {
-    x: 0.72, y: 1.12, w: 5.5, h: 1.3,
-    fontSize: 45, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.9,
+  addText(slide, "Access starts with the phone already there.", {
+    x: 0.72, y: 1.1, w: 6.2, h: 1.18,
+    fontSize: 40, bold: true, color: C.white,
   });
-  addText(slide, "The phone already in your hand becomes a clear first step.", {
-    x: 0.75, y: 2.78, w: 4.95, h: 0.65,
-    fontSize: 18, color: "E2E2E2",
+  addText(slide, "SeeNA turns one tap into an independent first step.", {
+    x: 0.75, y: 2.55, w: 4.95, h: 0.56,
+    fontSize: 18, color: C.lightGrey,
   });
-  addPill(slide, "VOICE GUIDED", 0.74, 4.18, 1.72, C.white, C.black, C.white);
-  addPill(slide, "NO READING", 2.65, 4.18, 1.55, C.white, C.black, C.white);
-  addPill(slide, "CLEAR NEXT STEP", 4.4, 4.18, 1.9, C.gold, C.black, C.gold);
+  addPill(slide, "AT HOME", 0.74, 3.55, 1.38, C.white, C.black, C.white);
+  addPill(slide, "VOICE GUIDED", 2.32, 3.55, 1.72, C.white, C.black, C.white);
+  addPill(slide, "REVIEWABLE", 4.24, 3.55, 1.6, C.gold, C.black, C.gold);
+
+  slide.addShape(SH.line, {
+    x: 6.15, y: 3.72, w: 0.78, h: 0,
+    line: { color: C.gold, width: 2.3, endArrowType: "triangle" },
+  });
+  addText(slide, "START", {
+    x: 6.65, y: 0.9, w: 1.1, h: 0.22,
+    fontSize: 10.5, bold: true, color: C.gold, charSpacing: 1.7, align: "center",
+  });
+  addPhone(slide, SCREENS.start, 6.6, 1.3, 2.24, 4.88, "SeeNA start screen", C.white);
+  addText(slide, "RESULT", {
+    x: 9.57, y: 0.9, w: 1.1, h: 0.22,
+    fontSize: 10.5, bold: true, color: C.gold, charSpacing: 1.7, align: "center",
+  });
+  addPhone(slide, SCREENS.result, 9.46, 1.3, 2.24, 4.88, "SeeNA screening result screen", C.white);
+  slide.addShape(SH.line, {
+    x: 8.92, y: 3.72, w: 0.38, h: 0,
+    line: { color: C.gold, width: 2.3, endArrowType: "triangle" },
+  });
+  addText(slide, "One guided screening", {
+    x: 7.42, y: 6.52, w: 3.4, h: 0.28,
+    fontSize: 14, bold: true, color: C.white, align: "center",
+  });
   addPageNumber(slide, 7, C.lightGrey);
-  addNotes(slide, "3:20 to 3:45", "SeeNA is for the moment before access: an older person screening independently, a family checking someone at home, or a remote community needing a first signal. It makes screening more approachable while keeping the next step clear: a complete eye examination when the result indicates concern.");
+  addNotes(slide, "3:05 to 3:35", "That means SeeNA can support the moment before access: an older adult at home, a family member helping someone they love, or a remote community looking for a first signal. The phone already there becomes a guided and reviewable first step. When the result suggests concern, SeeNA makes the next action clear: arrange a complete eye examination.");
 }
 
 // Slide 8: Close
@@ -422,7 +460,7 @@ function addNotes(slide, timing, script) {
     x: 7.62, y: 4.28, w: 4.9, h: 0.64,
     fontSize: 20, color: C.white, align: "right", bold: true,
   });
-  addNotes(slide, "3:45 to 4:00", "Technology should connect the blocks that access leaves missing. SeeNA turns the phone already in a person's hand into a first step toward clarity, because everyone deserves to see their world, now and always. We are SeeNA.");
+  addNotes(slide, "3:35 to 4:00", "Our world is built from connected people, resources and opportunities. When eye care becomes a missing block, distance and age can leave someone behind. SeeNA reconnects that block with a first step toward clarity. Because everyone deserves to see their world, now and always. We are SeeNA.");
 }
 
 pptx.writeFile({ fileName: OUT, compression: true });
