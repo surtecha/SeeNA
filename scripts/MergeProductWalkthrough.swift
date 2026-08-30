@@ -51,7 +51,6 @@ private struct OutputRecord: Codable {
     let framesPerSecond: Float
     let videoTrackCount: Int
     let audioTrackCount: Int
-    let muted: Bool
 }
 
 private struct ExportManifest: Codable {
@@ -63,7 +62,7 @@ private struct ExportManifest: Codable {
 }
 
 @main
-private enum MergeMutedDemo {
+private enum MergeProductWalkthrough {
     private static let timescale: CMTimeScale = 600
     private static let framesPerSecond: CMTimeScale = 30
     private static let journeySeconds = 60.0
@@ -80,7 +79,7 @@ private enum MergeMutedDemo {
             let arguments = Array(CommandLine.arguments.dropFirst())
             guard arguments.count == 3 || arguments.count == 4 else {
                 throw MergeFailure.usage(
-                    "Usage: MergeMutedDemo <60-second-journey.mp4> <results.mp4> <output.mp4> [--overwrite]"
+                    "Usage: MergeProductWalkthrough <60-second-journey.mp4> <results.mp4> <output.mp4> [--overwrite]"
                 )
             }
             if arguments.count == 4, arguments[3] != "--overwrite" {
@@ -358,7 +357,7 @@ private enum MergeMutedDemo {
         let manifest = ExportManifest(
             schemaVersion: 1,
             generatedAtUTC: ISO8601DateFormatter().string(from: Date()),
-            composition: "60-second product journey with a clean final result hold, followed by the complete results walkthrough fitted to 20 seconds; all audio removed",
+            composition: "60-second product journey with a clean final result hold, followed by the complete results walkthrough fitted into one 80-second experience",
             sources: [
                 FileRecord(
                     filename: journey.url.lastPathComponent,
@@ -384,8 +383,7 @@ private enum MergeMutedDemo {
                 height: height,
                 framesPerSecond: nominalFrameRate,
                 videoTrackCount: videoTracks.count,
-                audioTrackCount: audioTracks.count,
-                muted: true
+                audioTrackCount: audioTracks.count
             )
         )
 

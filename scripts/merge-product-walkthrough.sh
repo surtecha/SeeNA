@@ -8,14 +8,14 @@ if [[ "$#" -lt 3 || "$#" -gt 4 ]]; then
 fi
 
 script_dir="${0:A:h}"
-build_dir="$(mktemp -d /private/tmp/seena-muted-demo.XXXXXX)"
+build_dir="$(mktemp -d /private/tmp/seena-product-walkthrough.XXXXXX)"
 trap 'rm -rf "$build_dir"' EXIT
 
 xcrun swiftc \
   -parse-as-library \
   -framework AVFoundation \
   -framework CryptoKit \
-  "$script_dir/MergeMutedDemo.swift" \
-  -o "$build_dir/MergeMutedDemo"
+  "$script_dir/MergeProductWalkthrough.swift" \
+  -o "$build_dir/MergeProductWalkthrough"
 
-"$build_dir/MergeMutedDemo" "$@"
+"$build_dir/MergeProductWalkthrough" "$@"

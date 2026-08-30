@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="docs/assets/SeeNA-Product-Walkthrough-80s-Muted.mp4">
+  <a href="https://github.com/user-attachments/assets/f1a741ba-c69b-439a-8fc3-bdeb21a0a1c9">
     <img src="docs/assets/seena-hero.png" alt="SeeNA on iPhone, showing a Landolt C screening target" width="100%">
   </a>
 </p>
@@ -26,11 +26,9 @@ The experience is designed for people who may not be wearing their glasses, may 
 
 ## Watch SeeNA in action
 
-<p align="center">
-  <a href="docs/assets/SeeNA-Product-Walkthrough-80s-Muted.mp4"><strong>▶ Watch the complete 1 minute 20 second product walkthrough</strong></a>
-</p>
+https://github.com/user-attachments/assets/f1a741ba-c69b-439a-8fc3-bdeb21a0a1c9
 
-The walkthrough is muted and follows the complete experience from launch, positioning, and both screening tasks through results and answer review.
+Follow the complete 1 minute 20 second experience from launch and positioning through both screening tasks, results, and answer review. [Open the full-resolution walkthrough](docs/assets/SeeNA-Product-Walkthrough.mp4).
 
 ## Why SeeNA
 
