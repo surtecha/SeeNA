@@ -1,4 +1,3 @@
-const fs = require("fs");
 const path = require("path");
 const pptxgen = require("pptxgenjs");
 
@@ -7,7 +6,8 @@ const OUT = path.join(__dirname, "SeeNA-Syncs-Hackathon-2026-Pitch.pptx");
 const HERO = path.join(ROOT, "docs/assets/seena-hero.png");
 const CLOSING = path.join(ROOT, "DesignAssets/SeeNA-Pitch-Closing-Frame-v2.png");
 const APP_ICON = path.join(ROOT, "SeeNA/Assets.xcassets/AppIcon.appiconset/SEENA-AppIcon.png");
-const DEMO = path.join(__dirname, "SeeNA-Demo-60s.mp4");
+const DEMO_GIF = path.join(__dirname, "SeeNA-Demo-60s-visible.gif");
+const PRODUCT_IMPACT = path.join(ROOT, "DesignAssets/SeeNA-Devpost-Thumbnail.png");
 const SCREENS = {
   start: path.join(ROOT, "docs/assets/screens/01-start.jpg"),
   landolt: path.join(ROOT, "docs/assets/screens/02-landolt-c.jpg"),
@@ -250,61 +250,44 @@ function addNotes(slide, timing, script) {
   addNotes(slide, "0:45 to 1:10", "The experience is deliberately simple. Press Start. SeeNA speaks every step, uses the front sensors to help the person get into position, then presents one large target at a time. The user answers naturally by voice, including ‘I cannot see it.’ No charts, typing or technical setup.");
 }
 
-// Slide 4: Embedded one-minute demo
+// Slide 4: Visible one-minute demo
 {
   const slide = pptx.addSlide();
   slide.background = { color: C.black };
-  addSectionLabel(slide, "SeeNA in action", C.lightGrey);
-  addText(slide, "60 seconds.\nOne complete journey.", {
-    x: 0.72, y: 1.2, w: 3.7, h: 1.5,
-    fontSize: 39, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.92,
-  });
-  addText(slide, "Play the one-minute walkthrough.", {
-    x: 0.74, y: 3.0, w: 3.2, h: 0.32,
-    fontSize: 16, color: C.lightGrey,
-  });
-
-  const flow = ["Position", "Screen", "Understand", "Review"];
-  flow.forEach((label, i) => {
-    const y = 4.0 + i * 0.55;
-    slide.addShape(SH.rect, {
-      x: 0.76, y: y + 0.07, w: 0.22, h: 0.22,
-      fill: { color: i === 0 ? C.gold : C.white }, line: { color: i === 0 ? C.gold : C.white },
-    });
-    addText(slide, label, {
-      x: 1.22, y, w: 2.2, h: 0.29,
-      fontSize: 15, bold: true, color: C.white,
-    });
-  });
-
-  const cover = `data:image/jpeg;base64,${fs.readFileSync(SCREENS.start).toString("base64")}`;
   slide.addShape(SH.roundRect, {
-    x: 5.02, y: 0.48, w: 3.32, h: 6.66,
+    x: 0.72, y: 0.36, w: 3.45, h: 6.88,
     rectRadius: 0.11,
-    fill: { color: "1B1B1B" }, line: { color: "333333", width: 1.2 },
-    shadow: makeShadow(0.42, 15, 3),
+    fill: { color: "141414" }, line: { color: "353535", width: 1.2 },
+    shadow: makeShadow(0.38, 14, 3),
   });
-  slide.addMedia({
-    type: "video", path: DEMO, cover,
-    x: 5.13, y: 0.59, w: 3.10, h: 6.44,
-    objectName: "SeeNA 60-second product demo",
+  slide.addImage({
+    path: DEMO_GIF,
+    x: 0.84, y: 0.48, w: 3.21, h: 6.64,
+    sizing: { type: "contain", w: 3.21, h: 6.64 },
+    altText: "Animated 60-second SeeNA product walkthrough",
   });
-  addImageContain(slide, APP_ICON, 5.86, 2.3, 1.65, 1.65, "SeeNA play poster mark");
-  addPill(slide, "PLAY 1:00", 5.69, 4.34, 2.0, C.white, C.black, C.white);
-
-  slide.addShape(SH.roundRect, {
-    x: 9.28, y: 1.35, w: 3.08, h: 4.75,
-    rectRadius: 0.08,
-    fill: { color: "111111" }, line: { color: "333333", width: 1 },
+  addPill(slide, "60 SECOND LIVE WALKTHROUGH", 4.86, 0.68, 3.05, C.gold, C.black, C.gold);
+  addText(slide, "The complete\nSeeNA journey.", {
+    x: 4.84, y: 1.52, w: 6.7, h: 1.48,
+    fontSize: 45, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.9,
   });
-  addText(slide, "ONE TARGET", { x: 9.66, y: 1.78, w: 2.3, h: 0.26, fontSize: 11, bold: true, color: C.gold, charSpacing: 2.1 });
-  addText(slide, "One answer.", { x: 9.66, y: 2.14, w: 2.2, h: 0.4, fontSize: 24, bold: true, color: C.white });
-  slide.addShape(SH.line, { x: 9.66, y: 2.82, w: 2.0, h: 0, line: { color: "3A3A3A", width: 1 } });
-  addText(slide, "VOICE GUIDED", { x: 9.66, y: 3.18, w: 2.3, h: 0.26, fontSize: 11, bold: true, color: C.gold, charSpacing: 2.1 });
-  addText(slide, "Hands free.", { x: 9.66, y: 3.54, w: 2.2, h: 0.4, fontSize: 24, bold: true, color: C.white });
-  slide.addShape(SH.line, { x: 9.66, y: 4.22, w: 2.0, h: 0, line: { color: "3A3A3A", width: 1 } });
-  addText(slide, "REVIEWABLE", { x: 9.66, y: 4.58, w: 2.3, h: 0.26, fontSize: 11, bold: true, color: C.gold, charSpacing: 2.1 });
-  addText(slide, "Every answer.", { x: 9.66, y: 4.94, w: 2.3, h: 0.4, fontSize: 24, bold: true, color: C.white });
+  const journey = [
+    ["01", "Guided positioning"],
+    ["02", "Voice-led screening"],
+    ["03", "Result and answer review"],
+  ];
+  journey.forEach((item, i) => {
+    const y = 3.62 + i * 0.86;
+    addText(slide, item[0], { x: 4.9, y: y + 0.03, w: 0.42, h: 0.24, fontSize: 11, bold: true, color: C.gold });
+    addText(slide, item[1], { x: 5.55, y, w: 4.8, h: 0.34, fontSize: 20, bold: true, color: C.white });
+    if (i < journey.length - 1) {
+      slide.addShape(SH.line, { x: 5.55, y: y + 0.55, w: 4.7, h: 0, line: { color: "303030", width: 1 } });
+    }
+  });
+  addText(slide, "The walkthrough plays automatically in Slide Show mode.", {
+    x: 4.9, y: 6.48, w: 5.7, h: 0.28,
+    fontSize: 13, color: C.lightGrey,
+  });
   addPageNumber(slide, 4, C.lightGrey);
   addNotes(slide, "1:10 to 2:10", "Here is the complete flow. After Start, SeeNA checks distance, gaze, lighting and stillness, guiding the user with human instructions. Once positioned, it counts down and begins. The first task is Landolt C: the person says where the circle opens. The second is a Gabor pattern: they say left or right. Each eye is screened separately, and the target waits for the answer. At the end, SeeNA returns an estimated screening result for each eye, explains it in plain language and lets the user inspect every prompt, correct answer and response. The goal is not to make a diagnosis from a phone. It is to provide a clear first signal and a better reason to seek a complete eye examination.");
 }
@@ -346,94 +329,68 @@ function addNotes(slide, timing, script) {
   addNotes(slide, "2:10 to 2:45", "Every design decision supports independence. Large targets remain visible at a practical distance. Voice begins only after Start. Prompts do not overlap or cut each other off. Positioning allows natural human movement. If the target is not visible, SeeNA accepts that as useful evidence instead of forcing a guess. Results are readable, and every answer remains reviewable.");
 }
 
-// Slide 6: Trust architecture
+// Slide 6: Trust architecture, expressed through the product
 {
   const slide = pptx.addSlide();
   slide.background = { color: C.black };
   addSectionLabel(slide, "Built for trust", C.lightGrey);
-  addText(slide, "The phone screens. AI explains.", {
-    x: 0.72, y: 0.86, w: 8.0, h: 0.62,
-    fontSize: 38, bold: true, color: C.white,
+  addText(slide, "The result comes from the test.\nNot the model.", {
+    x: 0.72, y: 0.88, w: 9.2, h: 1.15,
+    fontSize: 40, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.9,
   });
-  addText(slide, "The number never comes from a model.", {
-    x: 8.75, y: 1.01, w: 3.82, h: 0.35,
-    fontSize: 17, bold: true, color: C.gold, align: "right",
-  });
+  addPhone(slide, SCREENS.result, 0.92, 2.2, 2.12, 4.61, "SeeNA screening result screen", C.white);
 
-  addText(slide, "ON IPHONE", { x: 0.78, y: 2.0, w: 2, h: 0.25, fontSize: 10.5, bold: true, color: C.gold, charSpacing: 2.2 });
-  const blocks = [
-    [0.78, "TrueDepth\n+ Motion"],
-    [3.20, "Quality\ngates"],
-    [5.62, "Landolt C\n+ Gabor"],
-    [8.04, "Local\nestimate"],
+  const trust = [
+    ["01", "Scored on the iPhone", "Landolt C and Gabor responses determine the estimate."],
+    ["02", "AI explains only", "Plain-language meaning, never a model-generated number."],
+    ["03", "Private by design", "No raw camera frames or face mesh sent to OpenAI."],
   ];
-  blocks.forEach((b, i) => {
-    addSmallBlock(slide, b[0], 2.42, 1.88, 1.42, b[1], "", false);
-    if (i < blocks.length - 1) addConnector(slide, b[0] + 1.94, 3.13, 0.34, C.gold);
-  });
-
-  addText(slide, "VOICE + EXPLANATION", { x: 0.78, y: 4.42, w: 2.8, h: 0.25, fontSize: 10.5, bold: true, color: C.gold, charSpacing: 2.2 });
-  addSmallBlock(slide, 0.78, 4.84, 2.35, 1.25, "Voice answer", "Natural speech", true);
-  addConnector(slide, 3.23, 5.46, 0.48, C.white);
-  addSmallBlock(slide, 3.83, 4.84, 2.52, 1.25, "Transcription", "Text only", true);
-  addConnector(slide, 6.45, 5.46, 0.48, C.white);
-  addSmallBlock(slide, 7.05, 4.84, 2.72, 1.25, "Explanation", "Plain language", true);
-
-  slide.addShape(SH.roundRect, {
-    x: 10.4, y: 2.42, w: 2.15, h: 3.67,
-    rectRadius: 0.08,
-    fill: { color: C.gold }, line: { color: C.gold },
-  });
-  addText(slide, "NO RAW\nCAMERA\nFRAMES", {
-    x: 10.73, y: 2.9, w: 1.5, h: 1.15,
-    fontSize: 22, bold: true, color: C.black, align: "center", valign: "mid", breakLine: true,
-  });
-  addText(slide, "No face mesh\nsent to AI", {
-    x: 10.73, y: 4.62, w: 1.5, h: 0.6,
-    fontSize: 13, bold: true, color: C.black, align: "center", breakLine: true,
+  trust.forEach((item, i) => {
+    const y = 2.2 + i * 1.54;
+    slide.addShape(SH.roundRect, {
+      x: 3.78, y, w: 8.5, h: 1.17,
+      rectRadius: 0.06,
+      fill: { color: i === 1 ? C.gold : "111111" },
+      line: { color: i === 1 ? C.gold : "303030", width: 1 },
+    });
+    addText(slide, item[0], {
+      x: 4.08, y: y + 0.2, w: 0.45, h: 0.22,
+      fontSize: 10.5, bold: true, color: i === 1 ? C.black : C.gold,
+    });
+    addText(slide, item[1], {
+      x: 4.75, y: y + 0.15, w: 3.25, h: 0.34,
+      fontSize: 21, bold: true, color: i === 1 ? C.black : C.white,
+    });
+    addText(slide, item[2], {
+      x: 8.05, y: y + 0.17, w: 3.75, h: 0.54,
+      fontSize: 12.5, color: i === 1 ? C.black : C.lightGrey, valign: "mid",
+    });
   });
   addPageNumber(slide, 6, C.lightGrey);
   addNotes(slide, "2:45 to 3:20", "Trust comes from separating screening from explanation. TrueDepth and motion signals enforce quality gates. Landolt C and Gabor responses are scored deterministically on the iPhone. OpenAI transcription converts speech to text, and GPT-5.6 Luna explains the result in plain language under a strict schema. AI never creates or changes the numeric estimate. Raw camera frames, face meshes and biometric data are not sent to OpenAI.");
 }
 
-// Slide 7: Impact
+// Slide 7: Product-focused impact
 {
   const slide = pptx.addSlide();
-  slide.background = { color: C.paper };
-  addSectionLabel(slide, "Why it matters");
-  addImageCover(slide, path.join(ROOT, "DesignAssets/SeeNA-Pitch-Closing-Frame.png"), 7.15, 0, 6.183, 7.5, "Older woman holding a phone with a vision target in a remote community");
+  addImageCover(slide, PRODUCT_IMPACT, 0, 0, 13.333, 7.5, "SeeNA product mark and iPhone on a black background");
   slide.addShape(SH.rect, {
-    x: 6.85, y: 0, w: 0.58, h: 7.5,
-    fill: { color: C.paper, transparency: 0 }, line: { color: C.paper, transparency: 100 },
+    x: 0, y: 0, w: 7.0, h: 7.5,
+    fill: { color: "000000", transparency: 15 }, line: { color: "000000", transparency: 100 },
   });
-  addText(slide, "Access begins with what\npeople already have.", {
-    x: 0.72, y: 1.18, w: 5.8, h: 1.32,
-    fontSize: 40, bold: true, breakLine: true, lineSpacingMultiple: 0.92,
+  addSectionLabel(slide, "Why it matters", C.lightGrey);
+  addText(slide, "Access without\ncomplexity.", {
+    x: 0.72, y: 1.12, w: 5.5, h: 1.3,
+    fontSize: 45, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.9,
   });
-  addText(slide, "A phone. A voice. A clear next step.", {
-    x: 0.75, y: 2.83, w: 5.4, h: 0.36,
-    fontSize: 18, color: C.grey,
+  addText(slide, "The phone already in your hand becomes a clear first step.", {
+    x: 0.75, y: 2.78, w: 4.95, h: 0.65,
+    fontSize: 18, color: "E2E2E2",
   });
-
-  const impact = [
-    ["01", "Independent"],
-    ["02", "Approachable"],
-    ["03", "Actionable"],
-  ];
-  impact.forEach((it, i) => {
-    const x = 0.75 + i * 1.93;
-    const y = 4.34;
-    slide.addShape(SH.roundRect, {
-      x, y, w: 1.67, h: 1.22,
-      rectRadius: 0.06,
-      fill: { color: i === 1 ? C.black : C.white },
-      line: { color: i === 1 ? C.black : C.line, width: 1 },
-      shadow: i === 1 ? makeShadow(0.18, 9, 2) : undefined,
-    });
-    addText(slide, it[0], { x: x + 0.18, y: y + 0.18, w: 0.4, h: 0.2, fontSize: 9.5, bold: true, color: C.gold });
-    addText(slide, it[1], { x: x + 0.18, y: y + 0.57, w: 1.35, h: 0.3, fontSize: 15.5, bold: true, color: i === 1 ? C.white : C.ink });
-  });
-  addPageNumber(slide, 7);
+  addPill(slide, "VOICE GUIDED", 0.74, 4.18, 1.72, C.white, C.black, C.white);
+  addPill(slide, "NO READING", 2.65, 4.18, 1.55, C.white, C.black, C.white);
+  addPill(slide, "CLEAR NEXT STEP", 4.4, 4.18, 1.9, C.gold, C.black, C.gold);
+  addPageNumber(slide, 7, C.lightGrey);
   addNotes(slide, "3:20 to 3:45", "SeeNA is for the moment before access: an older person screening independently, a family checking someone at home, or a remote community needing a first signal. It makes screening more approachable while keeping the next step clear: a complete eye examination when the result indicates concern.");
 }
 
