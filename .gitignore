@@ -18,6 +18,8 @@ node_modules/
 server/.env
 server/.env.*
 !server/.env.example
+server/.agents/
+server/skills-lock.json
 coverage/
 
 # macOS

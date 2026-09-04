@@ -1,32 +1,37 @@
 {
-  "composition" : "60-second product journey with a clean final result hold, followed by the complete results walkthrough fitted into one 80-second experience",
-  "generatedAtUTC" : "2026-08-29T23:52:34Z",
+  "composition" : "Complete SeeNA product walkthrough fitted into an exact 60-second, video-only README asset",
+  "generatedAtUTC" : "2026-09-04T17:51:19Z",
   "output" : {
     "audioTrackCount" : 0,
-    "bytes" : 24424403,
-    "durationSeconds" : 80,
+    "bytes" : 15157895,
+    "durationSeconds" : 60,
     "filename" : "SeeNA-Product-Walkthrough.mp4",
     "framesPerSecond" : 30,
-    "height" : 2622,
-    "sha256" : "d14a1fea5d6c8cd950e43b944f8200c6884e9911755c6cd847a233d7a5b1f2bc",
+    "height" : 2868,
+    "sha256" : "07f70c7edfb9d62ea740053ecce7d1968167b9269183f37b962f178f1d1fa43d",
     "videoTrackCount" : 1,
-    "width" : 1206
+    "width" : 1320
   },
-  "schemaVersion" : 1,
-  "sources" : [
-    {
-      "bytes" : 13676139,
-      "filename" : "SeeNA-Hackathon-Demo-60s.mp4",
-      "sha256" : "00e494d5df6dbce56acf1642a9bce0e7c593d639030d91d3cedf97f6acbfabf3",
-      "sourceDurationSeconds" : 60,
-      "timelineDurationSeconds" : 55
-    },
-    {
-      "bytes" : 20598720,
-      "filename" : "SeeNA-results-simulator-capture.mp4",
-      "sha256" : "c1336b7f1a8e94610a2ec7d025cb224561849c0ac19ed45f27d83fa79bd1287c",
-      "sourceDurationSeconds" : 32.403333333333336,
-      "timelineDurationSeconds" : 25
-    }
-  ]
+  "preview" : {
+    "bytes" : 1299580,
+    "durationSeconds" : 60,
+    "filename" : "SeeNA-Product-Walkthrough.gif",
+    "frameCount" : 240,
+    "framesPerSecond" : 4,
+    "height" : 782,
+    "loopCount" : 0,
+    "sha256" : "99375d31d3a24a3c1b2791ae36c0b5033ac6b2e4c29613b18b186f28771b3fab",
+    "width" : 360
+  },
+  "schemaVersion" : 2,
+  "source" : {
+    "bytes" : 42429788,
+    "filename" : "SeeNA-README-Walkthrough-final-raw-v2.mp4",
+    "selectedDurationSeconds" : 160,
+    "sha256" : "b7c3188b22b5d83b67512f5a5a5aece649bd7ff8ac7e31ff5aa52d8ebea55170",
+    "sourceDurationSeconds" : 279.98,
+    "timelineDurationSeconds" : 60,
+    "trimEndSeconds" : 160,
+    "trimStartSeconds" : 0
+  }
 }

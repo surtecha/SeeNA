@@ -4,7 +4,6 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import formidable, { type Fields, type Files } from "formidable";
 import { z } from "zod";
 import {
-  analyzeDirectionTranscript,
   parseChoice,
   parseSingleDirectionAnswer,
   type ChoiceSetID
@@ -15,10 +14,10 @@ import { chargeProviderBudget, secureEndpoint } from "../lib/security.js";
 export const config = { api: { bodyParser: false } };
 
 const metadataSchema = z.object({
-  mode: z.enum(["singleDirection", "directionBlock", "readabilityPhrase", "constrainedChoice"]),
+  mode: z.enum(["singleDirection", "constrainedChoice"]),
   locale: z.string().min(2).max(20),
   phraseId: z.string().max(80).optional(),
-  choiceSetId: z.enum(["contrast", "controls", "readAloud", "simplified"]).optional()
+  choiceSetId: z.enum(["contrast", "controls", "readAloud", "simplified", "eligibility"]).optional()
 }).strict();
 
 function first(fields: Fields, name: string): string | undefined {
@@ -32,6 +31,35 @@ function isPayloadTooLarge(error: unknown): boolean {
   if (Number(details.httpCode) === 413) return true;
   // Formidable 3.5.4 uses numeric codes for its size and count limits.
   return [1006, 1007, 1009, 1015, 1016].includes(Number(details.code));
+}
+
+export function singleDirectionPrompt(phraseId?: string): string {
+  if (phraseId === "gabor-single") {
+    return [
+      "A speaker gives one answer about a striped circle: left, right, or a natural phrase saying the target is not visible.",
+      "Transcribe the short phrase faithfully. Do not guess a direction and do not turn uncertainty into an answer."
+    ].join(" ");
+  }
+  return [
+    "A speaker gives one Landolt C opening direction: up, right, down, left, or a natural phrase saying the target is not visible.",
+    "Transcribe the short phrase faithfully. Do not guess a direction and do not turn uncertainty into an answer."
+  ].join(" ");
+}
+
+export function constrainedChoicePrompt(choiceSetId?: ChoiceSetID): string {
+  switch (choiceSetId) {
+    case "eligibility":
+      return "A speaker answers one safety question with yes, no, or a brief natural phrase such as none apply or one applies. Transcribe faithfully. Do not infer an answer.";
+    case "contrast":
+    case "simplified":
+      return "A speaker chooses one or two. Transcribe the short answer faithfully. Do not infer a choice.";
+    case "controls":
+      return "A speaker chooses standard or larger. Transcribe the short answer faithfully. Do not infer a choice.";
+    case "readAloud":
+      return "A speaker answers yes or no. Transcribe the short answer faithfully. Do not infer an answer.";
+    default:
+      return "Transcribe the short answer faithfully. Do not infer a choice.";
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -75,11 +103,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       ...(metadata.locale.toLowerCase().startsWith("en") ? { language: "en" } : {}),
       ...(metadata.mode === "singleDirection"
         ? {
-            prompt:
-              "A speaker gives one Landolt C opening direction or says they cannot see the target. Expected direction vocabulary is up, right, down, or left; transcribe the short natural phrase."
+            prompt: singleDirectionPrompt(metadata.phraseId)
           }
-        : metadata.mode === "directionBlock"
-          ? { prompt: "A speaker says exactly seven words chosen from up, right, down, and left." }
+        : metadata.mode === "constrainedChoice"
+          ? { prompt: constrainedChoicePrompt(metadata.choiceSetId) }
           : {})
     });
     const transcript = transcription.text.trim();
@@ -119,20 +146,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       return;
     }
 
-    if (metadata.mode === "directionBlock") {
-      const analysis = analyzeDirectionTranscript(transcript);
-      const valid = analysis.directions.length === 7 && analysis.unknownTokens.length === 0;
-      res.status(200).json({
-        valid,
-        mode: metadata.mode,
-        transcript,
-        directions: valid ? analysis.directions : null,
-        choice: null,
-        failureReason: valid ? null : "exactly_seven_directions_required"
-      });
-      return;
-    }
-
     if (metadata.mode === "constrainedChoice") {
       if (!metadata.choiceSetId) {
         res.status(400).json({ error: "choice_set_required" });
@@ -150,14 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       return;
     }
 
-    res.status(200).json({
-      valid: transcript.length > 0,
-      mode: metadata.mode,
-      transcript,
-      directions: null,
-      choice: null,
-      failureReason: transcript.length > 0 ? null : "empty_transcript"
-    });
+    res.status(400).json({ error: "unsupported_mode" });
   } catch (error) {
     const status = error instanceof z.ZodError ? 400 : isPayloadTooLarge(error) ? 413 : 502;
     res.status(status).json({ error: status === 400 ? "invalid_request" : status === 413 ? "request_too_large" : "transcription_unavailable" });

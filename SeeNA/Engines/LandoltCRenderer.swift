@@ -2,8 +2,18 @@ import SwiftUI
 import UIKit
 
 enum LandoltCRenderer {
+    private static let imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
     static func image(geometry: OptotypeGeometry, direction: OptotypeDirection) -> UIImage {
         let side = geometry.pixelHeight
+        let cacheKey = "\(side)-\(geometry.strokePixels)-\(geometry.gapPixels)-\(direction.rawValue)" as NSString
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
+        }
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -12,7 +22,7 @@ enum LandoltCRenderer {
             format: format
         )
 
-        return renderer.image { rendererContext in
+        let image = renderer.image { rendererContext in
             let context = rendererContext.cgContext
             context.setShouldAntialias(false)
             context.setAllowsAntialiasing(false)
@@ -46,6 +56,8 @@ enum LandoltCRenderer {
             )
             context.restoreGState()
         }
+        imageCache.setObject(image, forKey: cacheKey)
+        return image
     }
 }
 
@@ -95,6 +107,6 @@ struct LandoltRowView: View {
         .frame(maxWidth: .infinity, minHeight: max(80, geometry.pointHeight * 1.5))
         .background(Color.white)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Seven Landolt C targets. Read the opening directions from left to right.")
+        .accessibilityLabel("\(directions.count) Landolt C targets. Read the opening directions from left to right.")
     }
 }

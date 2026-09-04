@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/f1a741ba-c69b-439a-8fc3-bdeb21a0a1c9">
+  <a href="docs/assets/SeeNA-Product-Walkthrough.mp4">
     <img src="docs/assets/seena-hero.png" alt="SeeNA on iPhone, showing a Landolt C screening target" width="100%">
   </a>
 </p>
@@ -20,37 +20,47 @@
   <img alt="Voice guided" src="https://img.shields.io/badge/Experience-Voice_Guided-000000?style=flat-square">
 </p>
 
-SeeNA turns an iPhone into a guided vision screening companion. Place the phone securely, press Start, and follow natural spoken guidance. SeeNA helps the user reach the right position, presents one clear target at a time, listens for each answer, and explains the result in plain language.
+SeeNA turns an iPhone into a guided vision screening companion. Open the app to a calm, silent welcome, press Start, and follow natural spoken guidance. SeeNA helps the user reach 40 cm, presents one clear target at a time, listens for each answer, and explains the completed tasks in plain language.
 
-The experience is designed for people who may not be wearing their glasses, may not be comfortable with technology, or may find conventional eye charts difficult to use alone.
+The experience is designed for people who may not be wearing their glasses, may not be comfortable with technology, or may find conventional eye charts difficult to use alone. It is especially mindful of older people and communities where reaching routine eye care may involve distance, travel, cost, or help from someone else.
 
 ## Watch SeeNA in action
 
-https://github.com/user-attachments/assets/f1a741ba-c69b-439a-8fc3-bdeb21a0a1c9
+<p align="center">
+  <a href="docs/assets/SeeNA-Product-Walkthrough.mp4">
+    <img src="docs/assets/SeeNA-Product-Walkthrough.gif" alt="SeeNA product walkthrough from launch to answer review" width="360">
+  </a>
+</p>
 
-Follow the complete 1 minute 20 second experience from launch and positioning through both screening tasks, results, and answer review. [Open the full-resolution walkthrough](docs/assets/SeeNA-Product-Walkthrough.mp4).
+<p align="center">
+  <strong><a href="docs/assets/SeeNA-Product-Walkthrough.mp4">Watch the complete 60-second product walkthrough</a></strong>
+</p>
+
+See the complete experience from launch and positioning through both screening tasks, results, and answer review.
 
 ## Why SeeNA
 
-Vision screening often assumes that someone can read small instructions, position themselves precisely, and interact with a screen while their vision is already impaired. SeeNA removes that friction.
+For many people, an eye check is not close by. An older adult may depend on family for transport. Someone in a remote community may need to travel hours before they can even begin asking whether their sight has changed. Yet the first step is often built around small written instructions, a distant chart, and someone else operating the test.
+
+SeeNA begins with something far more accessible: the iPhone already in a person’s hand. It turns setup into a spoken conversation and each task into one simple question at a time.
 
 - Voice guidance begins only after the user presses Start.
-- Clear step based cues help the user move closer or farther away.
+- Clear step based cues help the user settle at the fixed 40 cm task distance.
 - A stable readiness window prevents small natural movements from constantly resetting progress.
 - One large target appears at a time, and SeeNA waits for the answer.
 - Natural responses such as “left,” “up,” or “I cannot see it” are accepted.
 - Short prompts, haptics, and subtle motion keep the experience calm and understandable.
-- Each eye is screened independently, with a complete answer review at the end.
+- Each eye is screened independently through eight Landolt C targets and eight Gabor targets, with a complete answer review at the end.
 
 ## The experience
 
-1. **Open SeeNA.** A focused opening moment introduces the product without unnecessary instructions.
+1. **Open SeeNA.** A focused, silent welcome introduces the product without speaking before the user is ready.
 2. **Press Start.** Camera and microphone permissions are requested with concise explanations.
 3. **Secure the phone.** Live face distance, gaze, lighting, and stillness feedback help create a reliable setup.
-4. **Move into position.** Spoken guidance gives practical step based directions, confirms when to stop, then counts down “3, 2, 1, start.”
-5. **Complete the Landolt C task.** Say the direction of the circle opening. The target changes only after SeeNA accepts the answer.
-6. **Complete the Gabor task.** Identify the pattern orientation using the same one target, one answer rhythm.
-7. **Understand the result.** SeeNA presents both eyes clearly, explains what the screening means, and lets the user compare every correct answer with the response that was heard.
+4. **Move into position.** Spoken guidance helps the user reach 40 cm, confirms when to stop, then counts down “3, 2, 1, start.”
+5. **Complete the Landolt C task.** Say the direction of each circle opening. SeeNA waits for an accepted answer before changing the target.
+6. **Complete the Gabor task.** Identify each pattern orientation using the same one target, one answer rhythm.
+7. **Review the session.** SeeNA presents both eyes clearly, gives a carefully bounded plain-language explanation, and lets the user compare every correct answer with the response that was heard.
 
 <table>
   <tr>
@@ -66,27 +76,21 @@ Vision screening often assumes that someone can read small instructions, positio
 
 ### Landolt C
 
-SeeNA presents a circle with a gap facing up, right, down, or left. The symbol is rendered directly from pixel controlled geometry, one at a time, with no bitmap scaling. Responses are accepted by voice and scored locally. The adaptive sequence searches for the smallest reliable target the user can identify under valid screening conditions.
+At a fixed 40 cm distance, SeeNA presents eight large circles for each eye, one at a time, with the gap facing up, right, down, or left. Every direction appears twice, and the next target waits for the current answer. The symbol is rendered directly from pixel-controlled geometry, with no bitmap scaling. Responses are accepted by voice, scored locally, and retained for answer review. The current phone presentation records performance on this task, not a clinical visual-acuity measurement.
 
 ### Gabor orientation
 
-The second task presents a large striped pattern and asks for its orientation. It adds a complementary orientation response signal without asking the user to read letters or words. SeeNA reports this as an orientation task, not as a clinical contrast sensitivity diagnosis.
+At the same fixed 40 cm distance, the second task presents eight large striped patterns for each eye, one at a time, and asks for each orientation. Four face left and four face right in a shuffled order. It adds a separate orientation response task without asking the user to read letters or words. The display is not luminance or contrast calibrated, so this result is not a contrast-sensitivity measurement or diagnosis.
 
-### Distance and eye power estimate
+### Distance and session quality
 
-The front TrueDepth camera estimates eye to screen distance while Core Motion confirms that the phone is still. SeeNA combines metric face tracking with projected facial scale, filters outliers, and uses a rolling median to reduce visible fluctuation. A local deterministic relationship converts a validated far point distance into an estimated myopic spherical range:
+The front TrueDepth camera estimates eye-to-screen distance while Core Motion checks that the phone is still. SeeNA filters outliers and uses a rolling median so brief natural movement does not constantly reset the experience. Distance, face count, lighting, head pose, stillness, response timing, and answer quality feed deterministic evidence checks that decide whether a task response can be kept or should be repeated.
 
-```text
-estimated diopters = -1 / distance in metres
-```
-
-Every measurement and number is produced by local code. Numeric output is only enabled when the exact iPhone has accepted physical calibration and the session passes distance, gaze, stillness, lighting, face, response, and evidence gates. SeeNA never invents a number when those conditions are not met.
-
-The result is a screening estimate, not a medical diagnosis or eyeglass prescription. It does not replace a complete examination by an eye care professional.
+The current release reports qualitative task outcomes and an answer audit for each eye. It does not show diopters, calculate a prescription, diagnose an eye condition, or replace an examination by an eye care professional.
 
 ## Technical architecture
 
-SeeNA separates measurement from language. The iPhone owns sensing, rendering, scoring, and every numeric result. The backend is limited to bounded speech and explanation tasks.
+SeeNA separates measurement from language. The iPhone owns sensing, rendering, evidence checks, scoring, and every displayed task outcome. OpenAI never performs the screening or changes a score. Its language role is limited to bounded answer transcription and a tightly gated plain-language explanation.
 
 ```mermaid
 flowchart LR
@@ -94,7 +98,7 @@ flowchart LR
         Sensors[TrueDepth camera<br/>Core Motion] --> Quality[Distance and quality gates]
         Quality --> Tasks[Landolt C and Gabor]
         Tasks --> Score[Deterministic local scoring]
-        Score --> Result[Screening result and evidence]
+        Score --> Result[Qualitative task result and answer review]
         Session[AppSession and feature view models] --> Quality
         Session --> Tasks
         Store[Protected local session store] <--> Session
@@ -103,14 +107,13 @@ flowchart LR
     subgraph Service[Bounded language service]
         Transcribe[gpt-transcribe]
         Explain[gpt-5.6-luna]
-        Speak[Natural voice prompts]
     end
 
     Tasks -->|bounded response audio| Transcribe
     Transcribe -->|text only| Tasks
     Result -->|allow-listed qualitative facts| Explain
     Explain -->|strict structured explanation| Result
-    Session <--> Speak
+    Session --> Guide[Serialized voice guidance<br/>with on-device fallback]
 ```
 
 | Layer | Responsibility |
@@ -119,21 +122,21 @@ flowchart LR
 | MVVM | Feature focused view models isolate onboarding, permissions, readiness, screening, results, and history |
 | AppSession | Owns navigation, the active screening session, sensor presentation state, and explanation state |
 | ARKit and Core Motion | Estimate eye distance, head pose, gaze coverage, face count, and phone stillness |
-| Rendering and scoring | Draw pixel aligned targets and calculate results with deterministic local code |
+| Rendering and scoring | Draw pixel-aligned targets and calculate qualitative task outcomes with deterministic local code |
 | Protected storage | Saves schema versioned sessions atomically on device with complete file protection |
-| TypeScript service | Runs narrow authenticated endpoints for speech, transcription, and qualitative explanation |
-| OpenAI | Transcribes bounded answers and returns schema constrained explanations with `store: false` and no tools |
+| TypeScript service | Runs narrow request-checked endpoints for speech, transcription, and qualitative explanation |
+| OpenAI | Transcribes bounded answers and returns schema constrained explanations from allow-listed qualitative facts with `store: false` and no tools |
 
-The language model cannot create, change, or render a measurement number. If the service is unavailable, local scoring and deterministic result wording remain available.
+The language model cannot create, change, or render a score. A response is shown only when it passes local schema, number, terminology, and meaning checks. If the service is unavailable or a response fails those checks, local scoring and deterministic result wording remain available.
 
 ## Trust and privacy
 
 - Raw camera frames, face meshes, eye coordinates, and biometric templates are never retained or sent to OpenAI.
-- Screening measurements and numeric results remain on the iPhone.
+- Task measurements and answer evidence remain on the iPhone.
 - Only bounded response audio and allow-listed qualitative result facts can cross the backend boundary.
 - Sessions are written atomically to protected local storage and can be deleted in the app.
 - The OpenAI API key remains server side and is never bundled into the iOS application.
-- Remote responses use strict schemas, bounded inputs, rate limits, and deterministic fallbacks.
+- Remote responses use strict schemas, bounded inputs, rate limits, local safety checks, and deterministic fallbacks.
 
 For the full engineering boundary, see [Technical architecture](docs/ARCHITECTURE.md) and [Validation protocol](docs/VALIDATION.md).
 
@@ -155,7 +158,7 @@ scripts/     Local configuration and media tooling
 - iOS 26 or later
 - A physical Face ID iPhone for TrueDepth, motion, microphone, and distance testing
 
-The simulator supports interface and fallback testing. Physical sensor behavior requires a real iPhone.
+The final iOS 26.5 smoke matrix covers every iPhone 14, 15, 16, and 17 size class available in Xcode, including base, Plus, Pro, Pro Max, and iPhone Air. The simulator supports interface and fallback testing. Physical sensor behavior requires a real iPhone.
 
 ### Open the app
 
@@ -187,6 +190,14 @@ npm run check
 
 ## Verification
 
+The current release has passed:
+
+- 178 deterministic Swift tests
+- 32 backend contract and safety tests, plus a live Luna response check
+- Debug and Release iOS 26 builds
+- A 16 of 16 simulator launch matrix across iPhone 14 through iPhone 17 and iPhone Air
+- Signed installation on a physical iPhone 16
+
 Run the deterministic Swift engines:
 
 ```bash
@@ -217,9 +228,9 @@ Continuous integration runs Swift tests, Debug and Release iOS builds, backend c
 
 ## Validation boundary
 
-SeeNA is built to fail safely. Simulator success cannot prove TrueDepth distance accuracy, microphone acoustics, or physical calibration. A numeric estimate remains locked unless the exact iPhone profile completes the physical calibration and evidence requirements in [docs/VALIDATION.md](docs/VALIDATION.md).
+SeeNA is built to fail safely. Simulator success cannot prove TrueDepth distance accuracy, microphone acoustics, or physical calibration. Numeric refractive output is disabled in the current release by a protocol-level lock. Exact-device calibration alone is not enough to enable it. A future numeric feature would require a separately approved, clinically validated protocol and supporting evidence, as described in [docs/VALIDATION.md](docs/VALIDATION.md).
 
-The current product is intended for research and screening. It does not assess every refractive condition or eye disease, cannot rule out a vision problem, and is not a substitute for professional eye care.
+The current product is a non-diagnostic, qualitative vision task. It does not assess every refractive condition or eye disease, cannot rule out a vision problem, and is not a substitute for professional eye care.
 
 ## Team
 
@@ -232,4 +243,4 @@ Built for **Syncs Hackathon 2026** by:
 
 ## See now. Keep seeing always.
 
-SeeNA imagines vision screening that starts with the device already in someone’s pocket, speaks when sight is limited, and turns a complicated process into a calm conversation.
+When distance, age, or access makes eye care harder to reach, the first step should not disappear. SeeNA imagines vision screening that starts with the device already in someone’s pocket, speaks when sight is limited, and turns a complicated process into a calm conversation.

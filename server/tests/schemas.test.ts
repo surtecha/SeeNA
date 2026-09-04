@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   assertExplanationDraftHasNoMeasurements,
-  containsModelMeasurementLanguage
+  containsInternalProductJargon,
+  containsModelMeasurementLanguage,
+  containsUnsupportedHealthClaimLanguage,
+  qualitativeCandidateMatchesFacts,
+  qualitativePlainMeaningIsSafe
 } from "../lib/explanation-safety.js";
-import { fallbackAdaptedContent, fallbackExplanation } from "../lib/fallbacks.js";
+import { fallbackExplanation } from "../lib/fallbacks.js";
 import {
-  adaptContentRequestSchema,
-  adaptedContentResponseSchema,
   explanationRequestSchema,
   explanationResponseSchema
 } from "../lib/schemas.js";
@@ -25,8 +27,8 @@ describe("strict contracts", () => {
 
     expect(() => assertExplanationDraftHasNoMeasurements({
       headline: "Ready",
-      plainMeaning: "Your screening is ready to review.",
-      limitations: ["Research prototype only."],
+      plainMeaning: "Your answers were recorded.",
+      limitations: ["This is a screening, not a prescription."],
       nextSteps: ["Arrange an examination."],
       disclaimer: "This is not a diagnosis.",
       usedFallback: false
@@ -34,7 +36,7 @@ describe("strict contracts", () => {
     expect(() => assertExplanationDraftHasNoMeasurements({
       headline: "Ready",
       plainMeaning: "Your estimate is two diopters.",
-      limitations: ["Research prototype only."],
+      limitations: ["This is a screening, not a prescription."],
       nextSteps: ["Arrange an examination."],
       disclaimer: "This is not a diagnosis.",
       usedFallback: false
@@ -44,8 +46,8 @@ describe("strict contracts", () => {
   it("rejects measurement language in every model-controlled explanation field", () => {
     const safeDraft = {
       headline: "Ready",
-      plainMeaning: "Your screening is ready to review.",
-      limitations: ["Research prototype only."],
+      plainMeaning: "Your answers were recorded.",
+      limitations: ["This is a screening, not a prescription."],
       nextSteps: ["Arrange an examination."],
       disclaimer: "This is not a diagnosis.",
       usedFallback: false
@@ -62,6 +64,92 @@ describe("strict contracts", () => {
         "model_explanation_contains_measurement_language"
       );
     });
+  });
+
+  it("rejects internal product and implementation jargon from user explanations", () => {
+    for (const text of [
+      "This prototype is ready.",
+      "POC mode is active.",
+      "This is simulated.",
+      "Calibration is incomplete.",
+      "The model validated it.",
+      "An AI provider reviewed it."
+    ]) {
+      expect(containsInternalProductJargon(text)).toBe(true);
+    }
+    expect(containsInternalProductJargon("Your screening is ready to review.")).toBe(false);
+    expect(() => assertExplanationDraftHasNoMeasurements({
+      headline: "Ready",
+      plainMeaning: "Your screening is ready to review.",
+      limitations: ["This prototype is not a prescription."],
+      nextSteps: ["Arrange an examination."],
+      disclaimer: "This is not a diagnosis.",
+      usedFallback: false
+    })).toThrow("model_explanation_contains_internal_product_jargon");
+  });
+
+  it("accepts only neutral qualitative task meaning and rejects health inference", () => {
+    for (const text of [
+      "All tasks are complete, and your responses were recorded for each eye.",
+      "Your answers were recorded for both eyes."
+    ]) {
+      expect(qualitativePlainMeaningIsSafe(text)).toBe(true);
+    }
+    for (const text of [
+      "Your visual acuity is normal.",
+      "Your results suggest myopia.",
+      "The model recommends a referral.",
+      "Your answers were not recorded.",
+      "The right eye performed better.",
+      "Your task was complete at one metre.",
+      "Your answers were recorded and everything looks clear."
+    ]) {
+      expect(qualitativePlainMeaningIsSafe(text)).toBe(false);
+    }
+    expect(containsUnsupportedHealthClaimLanguage("This suggests myopia.")).toBe(true);
+    expect(containsUnsupportedHealthClaimLanguage("Your responses were recorded.")).toBe(false);
+    expect(() => assertExplanationDraftHasNoMeasurements({
+      headline: "Tasks complete",
+      plainMeaning: "Your results suggest myopia.",
+      limitations: ["This task is not a prescription."],
+      nextSteps: ["Continue routine eye care."],
+      disclaimer: "Not a diagnosis.",
+      usedFallback: false
+    })).toThrow("model_explanation_contains_unsupported_health_claim");
+  });
+
+  it("matches qualitative candidate prose to intact local facts before Luna verification", () => {
+    const input = explanationRequestSchema.parse({
+      locale: "en-AU",
+      rightEye: { status: "experimentalTaskCompleted", quality: "good" },
+      leftEye: { status: "experimentalTaskCompleted", quality: "good" },
+      comparisonCode: "review_eyes_separately",
+      actionCode: "routine_exam_recommended",
+      limitations: ["not_a_prescription"],
+      localIntegrityCode: "consistent"
+    });
+    const draft = {
+      headline: "Tasks complete",
+      plainMeaning: "All tasks are complete, and your responses were recorded for each eye.",
+      limitations: ["This task is not a prescription."],
+      nextSteps: ["Continue routine eye care."],
+      disclaimer: "Not a diagnosis.",
+      usedFallback: false
+    };
+
+    expect(qualitativeCandidateMatchesFacts(input, draft)).toBe(true);
+    expect(qualitativeCandidateMatchesFacts(
+      { ...input, localIntegrityCode: "review_required" },
+      draft
+    )).toBe(false);
+    expect(qualitativeCandidateMatchesFacts(
+      { ...input, actionCode: "professional_exam_recommended" },
+      draft
+    )).toBe(false);
+    expect(qualitativeCandidateMatchesFacts(
+      input,
+      { ...draft, plainMeaning: "Your responses suggest myopia." }
+    )).toBe(false);
   });
 
   it("accepts only allow-listed qualitative result codes", () => {
@@ -92,11 +180,46 @@ describe("strict contracts", () => {
       rightEye: { status: "experimentalFarthestTargetPassed", quality: "good" },
       leftEye: { status: "experimentalFarthestTargetPassed", quality: "good" },
       comparisonCode: "review_eyes_separately",
-      actionCode: "routine_exam_recommended",
+      actionCode: "professional_exam_recommended",
       limitations: ["not_a_prescription"],
       localIntegrityCode: "consistent"
     });
-    expect(fallbackExplanation(input).verification).toBe("notApplicable");
+    const fallback = fallbackExplanation(input);
+    expect(fallback.verification).toBe("notApplicable");
+    expect(fallback.headline).toBe("Tasks complete.");
+    expect(fallback.plainMeaning).toBe("Your answers were recorded for both eyes.");
+    expect(fallback.nextSteps).toEqual(["Continue routine eye checks with an eye care professional."]);
+  });
+
+  it("never turns an active qualitative task outcome into a score-based referral", () => {
+    const input = explanationRequestSchema.parse({
+      locale: "en-AU",
+      rightEye: { status: "experimentalAdverseBoundary", quality: "good" },
+      leftEye: { status: "experimentalThresholdObserved", quality: "good" },
+      comparisonCode: "review_eyes_separately",
+      actionCode: "professional_exam_recommended",
+      limitations: ["not_a_prescription"],
+      localIntegrityCode: "consistent"
+    });
+    const fallback = fallbackExplanation(input);
+    const publicCopy = [
+      fallback.headline,
+      fallback.plainMeaning,
+      ...fallback.limitations,
+      ...fallback.nextSteps,
+      fallback.disclaimer
+    ].join(" ").toLowerCase();
+
+    expect(fallback.verification).toBe("notApplicable");
+    expect(fallback.headline).toBe("Tasks complete.");
+    expect(fallback.plainMeaning).toBe("Your answers were recorded for both eyes.");
+    for (const claim of [
+      "visual acuity", "myopia detected", "contrast sensitivity", "clinical threshold",
+      "professional review", "referral", "performance boundary", "farthest target",
+      "strongest target"
+    ]) {
+      expect(publicCopy).not.toContain(claim);
+    }
   });
 
   it("rejects free-form or numeric result facts at the request boundary", () => {
@@ -128,7 +251,8 @@ describe("strict contracts", () => {
       localIntegrityCode: "review_required"
     });
     const fallback = explanationResponseSchema.parse(fallbackExplanation(input));
-    expect(fallback.headline).toContain("another attempt");
+    expect(fallback.headline).toBe("Repeat needed.");
+    expect(fallback.plainMeaning).toBe("One or more tasks need repeating.");
     expect(fallback.verification).toBe("reviewRequired");
   });
 
@@ -136,24 +260,12 @@ describe("strict contracts", () => {
     expect(explanationResponseSchema.safeParse({
       headline: "Ready",
       plainMeaning: "Review the local result.",
-      limitations: ["Research prototype."],
+      limitations: ["This is not a prescription."],
       nextSteps: ["Arrange an examination."],
       disclaimer: "Not a diagnosis.",
       verification: "consistent",
       usedFallback: false,
       displayedEstimateDiopter: -2
     }).success).toBe(false);
-  });
-
-  it("adapts only the allow-listed fixture and validates fallback shape", () => {
-    const input = adaptContentRequestSchema.parse({
-      locale: "en-AU",
-      contentID: "medical-travel-support-v1",
-      highContrast: true,
-      readAloud: true,
-      simplifiedContent: true
-    });
-    expect(adaptedContentResponseSchema.parse(fallbackAdaptedContent(input)).steps).toHaveLength(3);
-    expect(adaptContentRequestSchema.safeParse({ ...input, contentID: "arbitrary" }).success).toBe(false);
   });
 });

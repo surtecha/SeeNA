@@ -17,7 +17,7 @@ final class ResultsPresentationPolicyTests: XCTestCase {
             numericResultsAllowed: false
         )
 
-        XCTAssertEqual(displayed, "Performance boundary recorded")
+        XCTAssertEqual(displayed, "Task complete")
         XCTAssertFalse(displayed.contains("D"))
         XCTAssertFalse(spoken.localizedCaseInsensitiveContains("diopter"))
         XCTAssertFalse(spoken.contains("2.25"))
@@ -45,7 +45,7 @@ final class ResultsPresentationPolicyTests: XCTestCase {
             gaborIntegrityValid: true
         )
 
-        XCTAssertEqual(displayed, "Performance boundary recorded")
+        XCTAssertEqual(displayed, "Task complete")
         XCTAssertFalse(displayed.contains("D"))
         XCTAssertFalse(spoken.localizedCaseInsensitiveContains("diopter"))
         XCTAssertFalse(spoken.contains("2.25"))
@@ -86,7 +86,7 @@ final class ResultsPresentationPolicyTests: XCTestCase {
         XCTAssertTrue(result.structurallyFinished)
         XCTAssertEqual(result.reliability, .repeatRequired)
         XCTAssertEqual(result.recommendation, .repeatRequired)
-        XCTAssertEqual(result.headline, "Screening complete, but repeat needed")
+        XCTAssertEqual(result.headline, "Repeat needed")
     }
 
     func testUnreliableEvidenceUsesNeutralNonnumericVerification() {
@@ -113,14 +113,168 @@ final class ResultsPresentationPolicyTests: XCTestCase {
             local: local,
             remote: "Remote reassurance",
             remoteVerified: true,
+            remoteWasGenerated: true,
             reliability: .repeatRequired
         ), local)
         XCTAssertEqual(ResultsPresentationPolicy.explanation(
             local: local,
             remote: "Remote reassurance",
             remoteVerified: false,
+            remoteWasGenerated: true,
             reliability: .reliable
         ), local)
+    }
+
+    func testActiveQualitativeStatusesUseOnlyNeutralTaskCompletionCopy() {
+        let completedStatuses: [ScreeningStatus] = [
+            .experimentalThresholdObserved,
+            .experimentalFarthestTargetPassed,
+            .experimentalAdverseBoundary,
+            .experimentalTaskCompleted
+        ]
+        let disallowedClaims = [
+            "acuity", "myopia", "contrast sensitivity", "threshold", "diagnos",
+            "prescription", "professional review", "referral", "score", "estimate",
+            "farthest", "strongest", "performance boundary"
+        ]
+
+        for status in completedStatuses {
+            var screening = completedQualitativeSession()
+            screening.rightEyeResult = qualitativeResult(
+                .right,
+                status: status,
+                recommendedAction: .professionalReviewRecommended
+            )
+            screening.leftEyeResult = qualitativeResult(
+                .left,
+                status: status,
+                recommendedAction: .professionalReviewRecommended
+            )
+
+            let presentation = ResultsPresentationPolicy.evaluate(
+                screening: screening,
+                landoltIntegrityValid: true,
+                gaborIntegrityValid: true
+            )
+            let display = ResultsPresentationPolicy.landoltDisplayValue(
+                result: screening.rightEyeResult,
+                integrityValid: true,
+                numericResultsAllowed: false
+            )
+            let spoken = ResultsPresentationPolicy.spokenLandoltSummary(
+                eye: .right,
+                result: screening.rightEyeResult,
+                integrityValid: true,
+                numericResultsAllowed: false
+            )
+            let publicCopy = [display, spoken, presentation.headline, presentation.localMeaning]
+                .joined(separator: " ")
+
+            XCTAssertEqual(display, "Task complete", "Unexpected display for \(status)")
+            XCTAssertEqual(spoken, "Right eye circle task complete.", "Unexpected speech for \(status)")
+            XCTAssertEqual(presentation.headline, "Tasks complete", "Unexpected headline for \(status)")
+            XCTAssertEqual(presentation.localMeaning, "Your answers were recorded for both eyes.")
+            XCTAssertEqual(presentation.recommendation, .routineExamRecommended)
+            for claim in disallowedClaims {
+                XCTAssertFalse(
+                    publicCopy.localizedCaseInsensitiveContains(claim),
+                    "Active qualitative copy contains a disallowed claim: \(claim)"
+                )
+            }
+        }
+    }
+
+    func testSafeGeneratedQualitativeProseDisplaysAfterAllGatesPass() {
+        let local = "Your answers were recorded for both eyes."
+        let remote = "All tasks are complete, and your responses were recorded for each eye."
+
+        XCTAssertEqual(
+            ResultsPresentationPolicy.explanation(
+                local: local,
+                remote: remote,
+                remoteVerified: true,
+                remoteWasGenerated: true,
+                reliability: .reliable
+            ),
+            remote
+        )
+    }
+
+    func testUnsafeGeneratedQualitativeProseAlwaysFallsBackLocally() {
+        let local = "Your answers were recorded for both eyes."
+        let unsafe = [
+            "Your score was eight.",
+            "Your result suggests myopia.",
+            "Your visual acuity looks normal.",
+            "Your contrast sensitivity is good.",
+            "This screening is clinically validated.",
+            "The model recommends a referral.",
+            "Your answers were not recorded.",
+            "The right eye performed better.",
+            "Your tasks are complete at one metre.",
+            "Your answers were recorded and everything looks clear."
+        ]
+
+        for remote in unsafe {
+            XCTAssertEqual(
+                ResultsPresentationPolicy.explanation(
+                    local: local,
+                    remote: remote,
+                    remoteVerified: true,
+                    remoteWasGenerated: true,
+                    reliability: .reliable
+                ),
+                local,
+                "Unsafe model prose crossed the client boundary: \(remote)"
+            )
+        }
+    }
+
+    func testFallbackOrBackendReviewCannotOverrideLocalMeaning() {
+        let local = "Your answers were recorded for both eyes."
+        let safeRemote = "All tasks are complete, and your responses were recorded for each eye."
+
+        XCTAssertEqual(ResultsPresentationPolicy.explanation(
+            local: local,
+            remote: safeRemote,
+            remoteVerified: false,
+            remoteWasGenerated: true,
+            reliability: .reliable
+        ), local)
+        XCTAssertEqual(ResultsPresentationPolicy.explanation(
+            local: local,
+            remote: safeRemote,
+            remoteVerified: true,
+            remoteWasGenerated: false,
+            reliability: .reliable
+        ), local)
+        XCTAssertEqual(ResultsPresentationPolicy.explanation(
+            local: local,
+            remote: safeRemote,
+            remoteVerified: true,
+            remoteWasGenerated: true,
+            reliability: .reviewRequired
+        ), local)
+    }
+
+    func testRepeatCopyIsShortAndContainsNoInternalReviewJargon() {
+        let display = ResultsPresentationPolicy.landoltDisplayValue(
+            result: qualitativeResult(.right),
+            integrityValid: false,
+            numericResultsAllowed: false
+        )
+        let spoken = ResultsPresentationPolicy.spokenLandoltSummary(
+            eye: .right,
+            result: qualitativeResult(.right),
+            integrityValid: false,
+            numericResultsAllowed: false
+        )
+
+        XCTAssertEqual(display, "Repeat needed")
+        XCTAssertEqual(spoken, "Right eye circle task needs repeating.")
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("evidence"))
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("consistency"))
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("review"))
     }
 
     func testPersistenceFailureRequiresExplicitRecoveryOrVolatileDecision() {
@@ -159,10 +313,14 @@ final class ResultsPresentationPolicyTests: XCTestCase {
         return session
     }
 
-    private func qualitativeResult(_ eye: Eye) -> EyeScreeningResult {
+    private func qualitativeResult(
+        _ eye: Eye,
+        status: ScreeningStatus = .experimentalFarthestTargetPassed,
+        recommendedAction: ScreeningAction = .routineExamRecommended
+    ) -> EyeScreeningResult {
         EyeScreeningResult(
             eye: eye,
-            status: .experimentalFarthestTargetPassed,
+            status: status,
             lastFailDiopter: nil,
             firstPassDiopter: nil,
             displayedEstimateDiopter: nil,
@@ -172,7 +330,7 @@ final class ResultsPresentationPolicyTests: XCTestCase {
             trackingQuality: .good,
             responseConsistency: .good,
             warnings: [.researchPrototype],
-            recommendedAction: .routineExamRecommended
+            recommendedAction: recommendedAction
         )
     }
 

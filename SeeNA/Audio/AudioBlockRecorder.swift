@@ -16,6 +16,12 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
     private var recordingRequestActive = false
     private var stopWasRequested = false
+    private let activityConfiguration: VoiceActivityConfiguration
+
+    init(activityConfiguration: VoiceActivityConfiguration = .screeningAnswer) {
+        self.activityConfiguration = activityConfiguration
+        super.init()
+    }
 
     func requestPermission() async -> Bool {
         await AVAudioApplication.requestRecordPermission()
@@ -26,12 +32,24 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
             throw RecordingError.alreadyRecording
         }
         recordingRequestActive = true
+        stopWasRequested = false
         defer { recordingRequestActive = false }
         guard await requestPermission() else { throw RecordingError.permissionDenied }
         try Task.checkCancellation()
+        guard !stopWasRequested else {
+            stopWasRequested = false
+            throw CancellationError()
+        }
         let session = AVAudioSession.sharedInstance()
+        var sessionIsActive = false
+        defer {
+            if sessionIsActive {
+                try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            }
+        }
         try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        sessionIsActive = true
 
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("seena-audio-\(UUID().uuidString)")
@@ -46,43 +64,45 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         let recorder = try AVAudioRecorder(url: fileURL, settings: settings)
         recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
-        guard recorder.record(forDuration: maximumDuration) else { throw RecordingError.couldNotStart }
+        guard recorder.record(forDuration: min(max(maximumDuration, 1), 20)) else {
+            cleanup(url: fileURL)
+            throw RecordingError.couldNotStart
+        }
         self.recorder = recorder
-        stopWasRequested = false
         isRecording = true
 
         let start = Date()
-        var heardSpeech = false
-        var lastSpeech = start
-        var peak: Float = -80
+        var activityDetector = VoiceActivityDetector(configuration: activityConfiguration)
 
         do {
             while recorder.isRecording {
                 try Task.checkCancellation()
                 recorder.updateMeters()
                 level = recorder.averagePower(forChannel: 0)
-                peak = max(peak, recorder.peakPower(forChannel: 0))
-                if level > -38 {
-                    heardSpeech = true
-                    lastSpeech = Date()
-                }
-                if heardSpeech, Date().timeIntervalSince(lastSpeech) >= 1.2, Date().timeIntervalSince(start) >= 2 {
+                let decision = activityDetector.observe(
+                    averagePowerDB: level,
+                    peakPowerDB: recorder.peakPower(forChannel: 0),
+                    elapsed: Date().timeIntervalSince(start)
+                )
+                if case .stop = decision {
                     recorder.stop()
                 }
-                try await Task.sleep(nanoseconds: 100_000_000)
+                let interval = max(activityConfiguration.sampleIntervalHint, 0.04)
+                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         } catch {
             recorder.stop()
             cleanup(url: fileURL)
             isRecording = false
+            level = -80
             self.recorder = nil
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            stopWasRequested = false
             throw error
         }
 
         isRecording = false
+        level = -80
         self.recorder = nil
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
         if stopWasRequested || Task.isCancelled {
             stopWasRequested = false
             cleanup(url: fileURL)
@@ -90,13 +110,13 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         }
         return AudioRecordingResult(
             fileURL: fileURL,
-            adequateLevel: heardSpeech && peak > -32,
+            adequateLevel: activityDetector.capturedPlausibleSpeech,
             duration: Date().timeIntervalSince(start)
         )
     }
 
     func stop() {
-        stopWasRequested = recorder != nil
+        stopWasRequested = recordingRequestActive || recorder != nil
         recorder?.stop()
     }
 

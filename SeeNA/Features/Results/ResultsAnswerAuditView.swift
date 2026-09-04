@@ -29,12 +29,13 @@ struct ResultsAnswerAuditView: View {
 }
 
 private struct AnswerAuditContent: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let screening: ScreeningSession
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
+        ScrollView(showsIndicators: dynamicTypeSize.isAccessibilitySize) {
             LazyVStack(alignment: .leading, spacing: 24) {
-                Text("Each target is shown with the answer that was accepted during the test.")
+                Text("Compare the correct answer with the answer SeeNA accepted, then review the score for each block.")
                     .font(.subheadline)
                     .foregroundStyle(SEENATheme.secondaryInk)
 
@@ -102,7 +103,7 @@ private struct LandoltAnswerBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             AnswerBlockHeader(
                 title: "Block \(blockNumber)",
-                detail: evidenceDetail
+                detail: "\(block.correctCount)/\(block.targets.count) correct"
             )
 
             Divider()
@@ -131,26 +132,6 @@ private struct LandoltAnswerBlock: View {
         return block.responses[index]
     }
 
-    private var evidenceDetail: String {
-        var parts = [
-            String(
-                format: "%.2f m measured · %d/%d correct",
-                block.actualMedianDistanceMetres,
-                block.correctCount,
-                block.targets.count
-            )
-        ]
-        if let rendered = block.renderedAngularSizeArcMinutes,
-           let actual = block.actualAngularSizeArcMinutes,
-           let presentation = block.presentationDistanceMetres {
-            parts.append(String(format: "requested/computed %.1f arcmin at %.2f m", rendered, presentation))
-            parts.append(String(format: "computed at block median approx. %.1f arcmin", actual))
-            if let drift = block.geometryDistanceDriftFraction, drift > 0.10 {
-                parts.append("meaningful distance drift")
-            }
-        }
-        return parts.joined(separator: " · ")
-    }
 }
 
 private struct GaborAnswerBlock: View {

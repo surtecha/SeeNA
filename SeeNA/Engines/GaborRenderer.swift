@@ -2,34 +2,61 @@ import SwiftUI
 import UIKit
 
 enum GaborRenderer {
-    private static let imageCache = NSCache<NSString, UIImage>()
+    private static let imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 12
+        cache.totalCostLimit = 48 * 1_024 * 1_024
+        return cache
+    }()
 
     static func image(
         orientation: GaborOrientation,
         contrast: Double,
-        pixelSize: Int = 112
+        geometry: GaborPresentationGeometry
     ) -> UIImage {
-        let size = max(48, pixelSize)
-        let cacheKey = "\(orientation.rawValue)-\(String(format: "%.4f", contrast))-\(size)" as NSString
+        guard geometry.isValidCurrentEvidence, contrast.isFinite else { return UIImage() }
+        let size = geometry.rasterPixelDiameter
+        let imageScale = geometry.displayScale
+        let cacheKey = "\(orientation.rawValue)-\(String(format: "%.4f", contrast))-\(size)-\(String(format: "%.3f", imageScale))" as NSString
         if let cached = imageCache.object(forKey: cacheKey) {
             return cached
         }
 
         var pixels = [UInt8](repeating: 255, count: size * size * 4)
         let centre = Double(size - 1) / 2
-        let sigma = Double(size) * 0.22
-        let frequency = 4.2 / Double(size)
-        let angle = (orientation == .left ? -45.0 : 45.0) * .pi / 180
+        let sigma = Double(size) * GaborPresentationGeometry.currentGaussianSigmaFraction
+        let frequency = GaborPresentationGeometry.currentCarrierCyclesPerPatch / Double(size)
+        let orientationDegrees = orientation == .left
+            ? -GaborPresentationGeometry.currentOrientationMagnitudeDegrees
+            : GaborPresentationGeometry.currentOrientationMagnitudeDegrees
+        let angle = orientationDegrees * .pi / 180
         let boundedContrast = min(1, max(0, contrast))
+        let gaussian = (0..<size).map { coordinate in
+            let delta = Double(coordinate) - centre
+            return exp(-(delta * delta) / (2 * sigma * sigma))
+        }
+        let xPhases = (0..<size).map { coordinate in
+            2 * .pi * frequency * (Double(coordinate) - centre) * cos(angle)
+        }
+        let yPhases = (0..<size).map { coordinate in
+            2 * .pi * frequency * (Double(coordinate) - centre) * sin(angle)
+        }
+        let xCosines = xPhases.map { cos($0) }
+        let xSines = xPhases.map { sin($0) }
+        let yCosines = yPhases.map { cos($0) }
+        let ySines = yPhases.map { sin($0) }
+        let phaseCosine = cos(GaborPresentationGeometry.currentCarrierPhaseRadians)
+        let phaseSine = sin(GaborPresentationGeometry.currentCarrierPhaseRadians)
 
         for y in 0..<size {
             for x in 0..<size {
-                let dx = Double(x) - centre
-                let dy = Double(y) - centre
-                let rotatedX = dx * cos(angle) + dy * sin(angle)
-                let envelope = exp(-(dx * dx + dy * dy) / (2 * sigma * sigma))
-                let grating = cos(2 * .pi * frequency * rotatedX)
-                let luminance = 0.5 + 0.5 * boundedContrast * envelope * grating
+                let envelope = gaussian[x] * gaussian[y]
+                let zeroPhaseGrating = xCosines[x] * yCosines[y] - xSines[x] * ySines[y]
+                let grating = zeroPhaseGrating * phaseCosine
+                    - (xSines[x] * yCosines[y] + xCosines[x] * ySines[y]) * phaseSine
+                let luminance = GaborPresentationGeometry.currentMeanLuminance
+                    + GaborPresentationGeometry.currentContrastAmplitudeScale
+                        * boundedContrast * envelope * grating
                 let value = UInt8(min(255, max(0, (luminance * 255).rounded())))
                 let offset = (y * size + x) * 4
                 pixels[offset] = value
@@ -53,54 +80,37 @@ enum GaborRenderer {
             bitmapInfo: bitmapInfo,
             provider: provider,
             decode: nil,
-            shouldInterpolate: true,
+            shouldInterpolate: false,
             intent: .defaultIntent
         )!
-        let image = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
-        imageCache.setObject(image, forKey: cacheKey)
+        let image = UIImage(cgImage: cgImage, scale: CGFloat(imageScale), orientation: .up)
+        imageCache.setObject(image, forKey: cacheKey, cost: pixels.count)
         return image
     }
 }
 
-/// A single, phone-scale Gabor patch. Keeping this separate from the legacy
-/// row renderer makes it impossible for the active test to shrink seven
-/// stimuli into one narrow phone row.
+/// A single phone-scale Gabor patch.
 struct GaborSingleTargetView: View {
     let orientation: GaborOrientation
     let contrast: Double
-    let size: CGFloat
+    let geometry: GaborPresentationGeometry
 
     var body: some View {
         Image(uiImage: GaborRenderer.image(
             orientation: orientation,
             contrast: contrast,
-            pixelSize: 512
+            geometry: geometry
         ))
         .resizable()
-        .interpolation(.high)
-        .frame(width: size, height: size)
+        // The source raster is generated at the exact displayed pixel diameter,
+        // avoiding an extra interpolation pass that can alter the stripe edges.
+        .interpolation(.none)
+        .frame(
+            width: CGFloat(geometry.pointDiameter),
+            height: CGFloat(geometry.pointDiameter)
+        )
         .clipShape(Circle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Striped contrast target")
-    }
-}
-
-struct GaborRowView: View {
-    let orientations: [GaborOrientation]
-    let contrast: Double
-
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(Array(orientations.enumerated()), id: \.offset) { _, orientation in
-                Image(uiImage: GaborRenderer.image(orientation: orientation, contrast: contrast))
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 43, height: 43)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 96)
-        .background(Color.white)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Seven striped circles. Say whether each tilts left or right.")
+        .accessibilityLabel("Striped circle")
     }
 }

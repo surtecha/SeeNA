@@ -78,6 +78,7 @@ struct GaborAnswerRow: View {
 }
 
 private struct AnswerAuditRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let number: Int
     let target: String
     let targetImage: String
@@ -101,22 +102,29 @@ private struct AnswerAuditRow: View {
                 .foregroundStyle(isCorrect ? SEENATheme.ink : SEENATheme.danger)
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                AnswerValue(label: "Target", value: target, systemImage: targetImage)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 12) {
+                    AnswerValue(label: "Correct answer", value: target, systemImage: targetImage)
+                    AnswerValue(label: "Accepted answer", value: response, systemImage: responseImage)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    AnswerValue(label: "Correct answer", value: target, systemImage: targetImage)
 
-                Image(systemName: "arrow.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(SEENATheme.tertiaryInk)
-                    .padding(.top, 22)
-                    .accessibilityHidden(true)
+                    Image(systemName: "arrow.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(SEENATheme.tertiaryInk)
+                        .padding(.top, 22)
+                        .accessibilityHidden(true)
 
-                AnswerValue(label: "Your answer", value: response, systemImage: responseImage)
+                    AnswerValue(label: "Accepted answer", value: response, systemImage: responseImage)
+                }
             }
         }
         .padding(14)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "Trial \(number). Target \(target). Your answer \(response). \(isCorrect ? "Correct" : "Incorrect")."
+            "Trial \(number). Correct answer \(target). Accepted answer \(response). \(isCorrect ? "Correct" : "Incorrect")."
         )
     }
 }

@@ -271,17 +271,17 @@ final class PhoneSetupViewModel {
         self.prompts = prompts
     }
 
-    var faceReady: Bool { sample?.faceCount == 1 }
-    var phoneReady: Bool { sample?.phoneStable == true }
-    var lightReady: Bool { (sample?.luminance ?? 0) >= 0.12 }
+    var faceReady: Bool { LivePositionReadinessPolicy.hasSingleFace(sample) }
+    var phoneReady: Bool { LivePositionReadinessPolicy.isPhoneStable(sample) }
+    var lightReady: Bool { LivePositionReadinessPolicy.hasEnoughLight(sample) }
     var gazeReady: Bool { gazeState == .aligned }
 
     var isReady: Bool {
-        faceReady && phoneReady && lightReady && gazeReady
+        LivePositionReadinessPolicy.phoneSetupIsReady(sample)
     }
 
     var readinessProgress: Double {
-        let checks = [faceReady, phoneReady, lightReady, gazeReady]
+        let checks = [faceReady, phoneReady, lightReady]
         return Double(checks.filter { $0 }.count) / Double(checks.count)
     }
 
@@ -294,8 +294,6 @@ final class PhoneSetupViewModel {
         if !faceReady { return "One face in frame" }
         if !phoneReady { return "Let the phone settle" }
         if !lightReady { return "Add more light" }
-        if gazeState == .unavailable { return "Look at the centre" }
-        if !gazeReady { return "Look at the centre" }
         return isLocked ? "Position locked" : "Ready to lock"
     }
 
@@ -463,17 +461,11 @@ final class CalibrationViewModel {
     }
 
     var headReady: Bool {
-        guard let sample else { return false }
-        return sample.faceCount == 1
-            && abs(sample.headYawDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
-            && abs(sample.headPitchDegrees) <= FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
+        LivePositionReadinessPolicy.hasAcceptableHeadPose(sample)
     }
 
     var trackingReady: Bool {
-        sample?.phoneStable == true
-            && headReady
-            && (sample?.luminance ?? 0) >= 0.12
-            && gazeState == .aligned
+        LivePositionReadinessPolicy.calibrationTrackingIsReady(sample)
     }
 
     var isReady: Bool {
@@ -510,7 +502,7 @@ final class CalibrationViewModel {
         prompts.preloadNavigationGuidance()
         prompts.beginNavigationGuidance()
         voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
-        prompts.speak("Step into view. I will guide you to forty centimetres.")
+        prompts.speakGuidanceIntro("Step into view. I will guide you to forty centimetres.")
     }
 
     func observe(_ sample: DistanceSample?, session: AppSession) {
@@ -570,18 +562,14 @@ final class CalibrationViewModel {
         HapticFeedback.selection()
         voiceScheduler.begin(at: Date().timeIntervalSinceReferenceDate)
         prompts.beginNavigationGuidance()
-        prompts.speak("I will guide you to forty centimetres. Face the phone and follow the voice.")
+        prompts.speakGuidanceIntro("I will guide you to forty centimetres. Face the phone and follow the voice.")
     }
 
     private func conditionCue(for sample: DistanceSample?) -> DistanceGuidanceCue? {
-        guard let sample, sample.faceCount == 1 else { return .findFace }
-        if !sample.phoneStable { return .waitForPhone }
-        if sample.luminance < 0.12 { return .addLight }
-        if gazeState != .aligned { return .lookAtCentre }
-        if abs(sample.headYawDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees
-            || abs(sample.headPitchDegrees) > FaceAlignmentPolicy.maximumMeasurementHeadAngleDegrees {
-            return .facePhone
-        }
+        guard let sample, LivePositionReadinessPolicy.hasSingleFace(sample) else { return .findFace }
+        if !LivePositionReadinessPolicy.isPhoneStable(sample) { return .waitForPhone }
+        if !LivePositionReadinessPolicy.hasEnoughLight(sample) { return .addLight }
+        if !LivePositionReadinessPolicy.hasAcceptableHeadPose(sample) { return .facePhone }
         return nil
     }
 
@@ -652,6 +640,6 @@ final class CalibrationViewModel {
         gazeState = .unavailable
         prompts.stop()
         prompts.beginNavigationGuidance()
-        prompts.speak("Tracking paused. I will guide you back to forty centimetres.")
+        prompts.speakGuidanceIntro("Tracking paused. I will guide you back to forty centimetres.")
     }
 }

@@ -164,7 +164,7 @@ function addNotes(slide, timing, script) {
     fontSize: 47, bold: true, color: C.white, breakLine: true,
     breakLineOnTextOverflow: false, lineSpacingMultiple: 0.9,
   });
-  addText(slide, "A voice-guided vision screening companion.", {
+  addText(slide, "A voice-guided visual task companion.", {
     x: 0.8, y: 5.02, w: 4.7, h: 0.38,
     fontSize: 18, color: "E8E8E8",
   });
@@ -192,7 +192,7 @@ function addNotes(slide, timing, script) {
   const barriers = [
     ["01", "DISTANCE", "The nearest check may be far away."],
     ["02", "DEPENDENCE", "Travel and unfamiliar tools can require help."],
-    ["03", "DELAY", "Without a first signal, action is postponed."],
+    ["03", "DELAY", "Without an accessible first step, action is postponed."],
   ];
   barriers.forEach((item, i) => {
     const x = 0.74 + i * 4.05;
@@ -296,8 +296,8 @@ function addNotes(slide, timing, script) {
   });
   const journey = [
     ["01", "Guided positioning"],
-    ["02", "Voice-led screening"],
-    ["03", "Result and answer review"],
+    ["02", "One target at a time"],
+    ["03", "Summary and answer review"],
   ];
   journey.forEach((item, i) => {
     const y = 3.62 + i * 0.86;
@@ -326,10 +326,10 @@ function addNotes(slide, timing, script) {
   });
 
   const items = [
-    [SCREENS.landolt, "01", "Circle"],
-    [SCREENS.gabor, "02", "Pattern"],
-    [SCREENS.result, "03", "Result"],
-    [SCREENS.answers, "04", "Review"],
+    [SCREENS.landolt, "01", "8 circles"],
+    [SCREENS.gabor, "02", "8 patterns"],
+    [SCREENS.result, "03", "Task summary"],
+    [SCREENS.answers, "04", "Answer review"],
   ];
   const sw = 2.08;
   const sh = 4.52;
@@ -349,7 +349,7 @@ function addNotes(slide, timing, script) {
     });
   });
   addPageNumber(slide, 5);
-  addNotes(slide, "2:13 to 2:38", "What you saw is deliberate. Landolt C asks where the circle opens. Gabor asks which way the pattern tilts. Each eye is screened separately, the target waits for every answer, and ‘I cannot see it’ counts as evidence. The user receives an estimate and can review every prompt, correct answer and response.");
+  addNotes(slide, "2:13 to 2:38", "Each eye completes eight Landolt C circles and eight Gabor patterns, one at a time. SeeNA asks for the opening or tilt, waits for every answer, and accepts ‘I cannot see it’ honestly instead of guessing. The user gets a clear task summary and can review every target, correct answer and accepted response.");
 }
 
 // Slide 6: Trust architecture, expressed through the product
@@ -357,15 +357,15 @@ function addNotes(slide, timing, script) {
   const slide = pptx.addSlide();
   slide.background = { color: C.black };
   addSectionLabel(slide, "Built for trust", C.lightGrey);
-  addText(slide, "The result comes from the test.\nNot the model.", {
+  addText(slide, "The summary comes from the task.\nNot the model.", {
     x: 0.72, y: 0.88, w: 9.2, h: 1.15,
     fontSize: 40, bold: true, color: C.white, breakLine: true, lineSpacingMultiple: 0.9,
   });
-  addPhone(slide, SCREENS.result, 0.92, 2.2, 2.12, 4.61, "SeeNA screening result screen", C.white);
+  addPhone(slide, SCREENS.result, 0.92, 2.2, 2.12, 4.61, "SeeNA qualitative task summary screen", C.white);
 
   const trust = [
-    ["01", "Scored on the iPhone", "Landolt C and Gabor responses determine the estimate."],
-    ["02", "AI explains only", "Plain-language meaning, never a model-generated number."],
+    ["01", "Scored on the iPhone", "Landolt C and Gabor answers are scored locally."],
+    ["02", "AI explains only", "Plain-language context, without changing local evidence."],
     ["03", "Private by design", "No raw camera frames or face mesh sent to OpenAI."],
   ];
   trust.forEach((item, i) => {
@@ -390,7 +390,7 @@ function addNotes(slide, timing, script) {
     });
   });
   addPageNumber(slide, 6, C.lightGrey);
-  addNotes(slide, "2:38 to 3:13", "The architecture separates screening from explanation. TrueDepth, motion, lighting, gaze and stillness checks run on the device to protect result quality. Landolt C and Gabor responses are scored deterministically on the iPhone. OpenAI transcription turns speech into text, and GPT-5.6 Luna explains the finished result in plain language. AI never creates or changes the numeric estimate, and raw camera frames and face-mesh data are not sent to OpenAI.");
+  addNotes(slide, "2:38 to 3:13", "The architecture separates local evidence from explanation. TrueDepth, motion, lighting, gaze and stillness checks run on the device to protect task quality. Landolt C and Gabor responses are scored deterministically on the iPhone. OpenAI transcription turns speech into text, and GPT-5.6 Luna explains the finished qualitative summary in plain language. AI never changes the local score, and raw camera frames and face-mesh data are not sent to OpenAI.");
 }
 
 // Slide 7: Product-focused impact using only real app screens
@@ -423,17 +423,17 @@ function addNotes(slide, timing, script) {
     x: 9.57, y: 0.9, w: 1.1, h: 0.22,
     fontSize: 10.5, bold: true, color: C.gold, charSpacing: 1.7, align: "center",
   });
-  addPhone(slide, SCREENS.result, 9.46, 1.3, 2.24, 4.88, "SeeNA screening result screen", C.white);
+  addPhone(slide, SCREENS.result, 9.46, 1.3, 2.24, 4.88, "SeeNA qualitative task summary screen", C.white);
   slide.addShape(SH.line, {
     x: 8.92, y: 3.72, w: 0.38, h: 0,
     line: { color: C.gold, width: 2.3, endArrowType: "triangle" },
   });
-  addText(slide, "One guided screening", {
+  addText(slide, "One guided experience", {
     x: 7.42, y: 6.52, w: 3.4, h: 0.28,
     fontSize: 14, bold: true, color: C.white, align: "center",
   });
   addPageNumber(slide, 7, C.lightGrey);
-  addNotes(slide, "3:13 to 3:37", "SeeNA supports the moment before access: an older adult at home, a family helping someone they love, or a remote community looking for a first signal. The phone already there becomes a guided, reviewable first step. When concern appears, SeeNA makes the next action clear: arrange a complete eye examination.");
+  addNotes(slide, "3:13 to 3:37", "SeeNA supports the moment before access: an older adult at home, a family helping someone they love, or a remote community looking for a simpler first step. The phone already there becomes a guided, reviewable experience. SeeNA stays honest about its limits and keeps the next action clear: routine professional eye care still matters.");
 }
 
 // Slide 8: Close

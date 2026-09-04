@@ -346,68 +346,65 @@ final class MeasurementEngineTests: XCTestCase {
         )
     }
 
-    func testDirectionScoring() {
-        let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down]
-        let responses: [OptotypeDirection] = [.up, .right, .down, .left, .up, .left, .right]
-        XCTAssertEqual(TrialScorer.correctCount(targets: targets, responses: responses), 5)
-        XCTAssertEqual(TrialScorer.outcome(correctCount: 5, hasExactlySevenResponses: true), .pass)
-        XCTAssertEqual(TrialScorer.outcome(correctCount: 4, hasExactlySevenResponses: true), .borderline)
-        XCTAssertEqual(TrialScorer.outcome(correctCount: 3, hasExactlySevenResponses: true), .fail)
-        XCTAssertEqual(TrialScorer.outcome(correctCount: 7, hasExactlySevenResponses: false), .invalid)
+    func testLandoltScoringUsesIndependentSixOfEightRule() {
+        let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down, .left]
+        let responses: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .left, .up]
+        XCTAssertEqual(TrialScorer.correctCount(targets: targets, responses: responses), 6)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 6, responseCount: 8), .pass)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 8, responseCount: 8), .pass)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 5, responseCount: 8), .borderline)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 4, responseCount: 8), .fail)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 0, responseCount: 8), .fail)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 6, responseCount: 7), .invalid)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 6, responseCount: 9), .invalid)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: -1, responseCount: 8), .invalid)
+        XCTAssertEqual(TrialScorer.outcome(correctCount: 9, responseCount: 8), .invalid)
+        XCTAssertEqual(TrialScorer.randomGuessPassProbability, 0.004_226_684_570_312_5)
+        XCTAssertEqual(LandoltProtocolDescriptor.activePhoneLocator.version, 3)
+        XCTAssertEqual(
+            LandoltProtocolDescriptor.activePhoneLocator.responsesPerLevel,
+            SequentialOptotypeSession.requiredTargetCount
+        )
     }
 
-    func testGaborScoringUsesSameConservativeSevenAnswerRule() {
-        let targets: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left]
-        let responses: [GaborOrientation] = [.left, .right, .left, .right, .right, .left, .left]
-        XCTAssertEqual(GaborScorer.correctCount(targets: targets, responses: responses), 5)
-        XCTAssertEqual(GaborScorer.outcome(correctCount: 5, hasExactlySevenResponses: true), .pass)
-        XCTAssertEqual(GaborScorer.outcome(correctCount: 4, hasExactlySevenResponses: true), .borderline)
+    func testGaborScoringUsesIndependentSevenOfEightRule() {
+        let targets: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left, .right]
+        let responses: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left, .left]
+        XCTAssertEqual(GaborScorer.correctCount(targets: targets, responses: responses), 7)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 7, responseCount: 8), .pass)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 8, responseCount: 8), .pass)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 6, responseCount: 8), .borderline)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 5, responseCount: 8), .fail)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 0, responseCount: 8), .fail)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 7, responseCount: 7), .invalid)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 7, responseCount: 9), .invalid)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: -1, responseCount: 8), .invalid)
+        XCTAssertEqual(GaborScorer.outcome(correctCount: 9, responseCount: 8), .invalid)
+        XCTAssertEqual(GaborScorer.randomGuessPassProbability, 0.035_156_25)
     }
 
-    func testGaborContrastStaircaseStopsAtFirstFailedLevel() {
-        var engine = GaborContrastEngine(eye: .right)
-        XCTAssertEqual(engine.nextAction, .test(contrast: 0.40))
-        XCTAssertEqual(engine.submit(gaborTrial(contrast: 0.40, outcome: .pass)), .test(contrast: 0.25))
-        XCTAssertEqual(engine.submit(gaborTrial(contrast: 0.25, outcome: .pass)), .test(contrast: 0.16))
+    func testGaborUsesOneVisibleBlockAndCompletesNeutrallyForEveryValidScore() {
+        XCTAssertEqual(GaborContrastEngine.contrastLevels, [0.40])
 
-        guard case .completed(let result) = engine.submit(gaborTrial(contrast: 0.16, outcome: .fail)) else {
-            return XCTFail("Expected a completed Gabor result")
+        for eye in Eye.allCases {
+            for scoreOutcome in [TrialOutcome.pass, .borderline, .fail] {
+                var engine = GaborContrastEngine(eye: eye)
+                XCTAssertEqual(engine.nextAction, .test(contrast: 0.40))
+
+                guard case .completed(let result) = engine.submit(
+                    gaborTrial(contrast: 0.40, outcome: scoreOutcome, eye: eye)
+                ) else { return XCTFail("One valid Gabor block must complete the task") }
+
+                XCTAssertEqual(result.eye, eye)
+                XCTAssertEqual(result.status, .completed)
+                XCTAssertEqual(result.responseConsistency, .good)
+                XCTAssertEqual(
+                    GaborCompletionPolicy.disposition(for: result, integrityIsValid: true),
+                    .reliableCompletion
+                )
+                XCTAssertEqual(engine.nextAction, .completed(result))
+            }
         }
-        XCTAssertEqual(result.status, .unreliableMeasurement)
-        XCTAssertEqual(result.responseConsistency, .poor)
-        guard case .completed(let replayed) = engine.nextAction else {
-            return XCTFail("Expected terminal result to remain available")
-        }
-        XCTAssertEqual(replayed.status, .unreliableMeasurement)
-    }
-
-    func testGaborCompletionDispositionDistinguishesPassBorderlineAndFail() {
-        var passing = GaborContrastEngine(eye: .right)
-        for contrast in GaborContrastEngine.contrastLevels.dropLast() {
-            XCTAssertEqual(
-                passing.submit(gaborTrial(contrast: contrast, outcome: .pass)),
-                .test(contrast: GaborContrastEngine.contrastLevels[
-                    GaborContrastEngine.contrastLevels.firstIndex(of: contrast)! + 1
-                ])
-            )
-        }
-        guard case .completed(let passed) = passing.submit(
-            gaborTrial(contrast: 0.06, outcome: .pass)
-        ) else { return XCTFail("Expected reliable completion") }
-        XCTAssertEqual(GaborCompletionPolicy.disposition(for: passed, integrityIsValid: true), .reliableCompletion)
-
-        var borderline = GaborContrastEngine(eye: .right)
-        XCTAssertEqual(borderline.submit(gaborTrial(contrast: 0.40, outcome: .borderline)), .test(contrast: 0.40))
-        guard case .completed(let borderlineResult) = borderline.submit(
-            gaborTrial(contrast: 0.40, outcome: .borderline)
-        ) else { return XCTFail("Expected repeat-needed borderline completion") }
-        XCTAssertEqual(GaborCompletionPolicy.disposition(for: borderlineResult, integrityIsValid: true), .repeatNeeded)
-
-        var failed = GaborContrastEngine(eye: .right)
-        guard case .completed(let failedResult) = failed.submit(
-            gaborTrial(contrast: 0.40, outcome: .fail)
-        ) else { return XCTFail("Expected repeat-needed failed completion") }
-        XCTAssertEqual(GaborCompletionPolicy.disposition(for: failedResult, integrityIsValid: true), .repeatNeeded)
     }
 
     func testGaborContrastStaircaseRejectsStaleWrongLevel() {
@@ -421,49 +418,79 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertEqual(result.responseConsistency, .poor)
     }
 
-    func testSearchStartsCloseAndMovesFartherOnlyAfterPassing() {
-        var engine = ThresholdSearchEngine(eye: .right)
-        XCTAssertEqual(
-            engine.nextAction,
-            .test(candidate: .init(diopter: -2.5), stage: .coarse)
+    func testActiveLandoltUsesOneFortyCentimetreBlockAndNeverMovesFarther() {
+        XCTAssertEqual(ThresholdSearchEngine.coarseCandidates, [-2.50])
+        XCTAssertEqual(ThresholdSearchEngine.maximumActivePhoneLocatorDistanceMetres, 0.40)
+
+        for eye in Eye.allCases {
+            for scoreOutcome in [TrialOutcome.pass, .borderline, .fail] {
+                var engine = ThresholdSearchEngine(eye: eye)
+                guard case .test(let candidate, .coarse) = engine.nextAction else {
+                    return XCTFail("Expected the one active block")
+                }
+                XCTAssertEqual(candidate.diopter, -2.50)
+                XCTAssertEqual(candidate.distanceMetres, 0.40, accuracy: 0.000_001)
+
+                guard case .completed(let result) = engine.submit(block: block(
+                    eye: eye,
+                    candidate: candidate.diopter,
+                    distance: candidate.distanceMetres,
+                    outcome: scoreOutcome
+                )) else { return XCTFail("One quality-valid block must complete the task") }
+
+                XCTAssertEqual(result.eye, eye)
+                XCTAssertEqual(result.status, .experimentalTaskCompleted)
+                XCTAssertEqual(result.recommendedAction, .unavailable)
+                assertNoNumericPayload(result)
+            }
+        }
+    }
+
+    func testFutureClinicalProtocolKeepsItsExistingTwoMetreSearchRange() {
+        let descriptor = LandoltProtocolDescriptor(
+            identifier: "future-clinical-five-arcminute",
+            version: 1,
+            presentationMode: .clinicalFiveArcMinute,
+            responsesPerLevel: SequentialOptotypeSession.requiredTargetCount,
+            usesValidatedThresholdModel: true,
+            permitsPointSizeClamping: false
         )
+        var engine = ThresholdSearchEngine(eye: .right, protocolDescriptor: descriptor)
+
         XCTAssertEqual(
-            engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.40, outcome: .pass)),
+            engine.submit(block: block(
+                eye: .right,
+                candidate: -2.50,
+                distance: 0.40,
+                outcome: .pass
+            )),
             .test(candidate: .init(diopter: -1.25), stage: .coarse)
         )
         XCTAssertEqual(
-            engine.submit(block: block(eye: .right, candidate: -1.25, distance: 0.80, outcome: .pass)),
-            .test(candidate: .init(diopter: -0.5), stage: .coarse)
+            engine.submit(block: block(
+                eye: .right,
+                candidate: -1.25,
+                distance: 0.80,
+                outcome: .pass
+            )),
+            .test(candidate: .init(diopter: -0.50), stage: .coarse)
         )
-    }
-
-    func testPassingThroughFarthestCandidateRequiresConfirmationAndReturnsBoundaryStatus() {
-        var engine = ThresholdSearchEngine(eye: .right)
-        for (candidate, nextCandidate) in zip(
-            ThresholdSearchEngine.coarseCandidates.dropLast(),
-            ThresholdSearchEngine.coarseCandidates.dropFirst()
-        ) {
-            XCTAssertEqual(
-                engine.submit(block: block(eye: .right, candidate: candidate, distance: 1 / abs(candidate), outcome: .pass)),
-                .test(candidate: .init(diopter: nextCandidate), stage: .coarse)
-            )
-        }
         XCTAssertEqual(
-            engine.submit(block: block(eye: .right, candidate: -0.5, distance: 2.01, outcome: .pass)),
-            .test(candidate: .init(diopter: -0.5), stage: .confirmation)
+            engine.submit(block: block(
+                eye: .right,
+                candidate: -0.50,
+                distance: 2.00,
+                outcome: .pass
+            )),
+            .test(candidate: .init(diopter: -0.50), stage: .confirmation)
         )
-
-        let confirmation = block(eye: .right, candidate: -0.5, distance: 1.98, outcome: .pass)
-        guard case .completed(let result) = engine.submit(block: confirmation) else {
-            return XCTFail("Expected completed boundary result")
-        }
-        XCTAssertEqual(result.status, .noMyopiaDetectedWithinRange)
-        XCTAssertNil(result.displayedEstimateDiopter)
-        XCTAssertEqual(result.thresholdDistanceMetres, 1.98)
     }
 
-    func testFirstFarFailureIsBracketedWithNearestPassThenConfirmed() {
-        var engine = ThresholdSearchEngine(eye: .left)
+    func testFutureClinicalPathStillBracketsRefinesAndConfirms() {
+        var engine = ThresholdSearchEngine(
+            eye: .left,
+            protocolDescriptor: futureClinicalDescriptor
+        )
         XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -2.5, distance: 0.40, outcome: .pass)), .test(candidate: .init(diopter: -1.25), stage: .coarse))
         XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -1.25, distance: 0.80, outcome: .fail)), .test(candidate: .init(diopter: -2), stage: .fine))
         XCTAssertEqual(engine.submit(block: block(eye: .left, candidate: -2, distance: 0.50, outcome: .fail)), .test(candidate: .init(diopter: -2.25), stage: .fine))
@@ -472,35 +499,109 @@ final class MeasurementEngineTests: XCTestCase {
         guard case .completed(let result) = engine.submit(block: block(eye: .left, candidate: -2.25, distance: 0.44, outcome: .pass)) else {
             return XCTFail("Expected valid result")
         }
-        XCTAssertEqual(result.status, .validEstimate)
-        XCTAssertEqual(result.lastFailDiopter, -2)
-        XCTAssertEqual(result.firstPassDiopter, -2.25)
-        XCTAssertEqual(try XCTUnwrap(result.displayedEstimateDiopter), -2.25, accuracy: 0.000_001)
-        XCTAssertEqual(result.thresholdDistanceMetres, 0.44)
+        XCTAssertEqual(result.status, .experimentalThresholdObserved)
+        assertNoNumericPayload(result)
     }
 
-    func testFailingClosestCandidateRequiresConfirmationAndReturnsStrongBoundary() {
+    func testPhoneTaskCompletesOnceWithoutNumericPayloadForAnyDescriptorFlags() {
+        let descriptors = [
+            LandoltProtocolDescriptor.activePhoneLocator,
+            LandoltProtocolDescriptor(
+                identifier: "locally-spoofed-phone-protocol",
+                version: 999,
+                presentationMode: .phonePOCLocator,
+                responsesPerLevel: 100,
+                usesValidatedThresholdModel: true,
+                permitsPointSizeClamping: false
+            )
+        ]
+
+        for descriptor in descriptors {
+            var engine = ThresholdSearchEngine(
+                eye: .right,
+                protocolDescriptor: descriptor
+            )
+            guard case .completed(let result) = engine.submit(block: block(
+                eye: .right,
+                candidate: -2.5,
+                distance: 0.40,
+                outcome: .pass
+            )) else {
+                return XCTFail("Expected phone locator completion")
+            }
+
+            XCTAssertEqual(result.status, .experimentalTaskCompleted)
+            XCTAssertEqual(result.recommendedAction, .unavailable)
+            assertNoNumericPayload(result)
+        }
+    }
+
+    func testMalformedActiveBlockRepeatsThenAValidBlockCompletes() {
         var engine = ThresholdSearchEngine(eye: .right)
-        XCTAssertEqual(
-            engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.40, outcome: .fail)),
-            .test(candidate: .init(diopter: -2.5), stage: .boundaryConfirmation)
+        let valid = block(eye: .right, candidate: -2.5, distance: 0.40, outcome: .pass)
+        let malformed = TrialBlock(
+            eye: valid.eye,
+            candidateDiopter: valid.candidateDiopter,
+            targetDistanceMetres: valid.targetDistanceMetres,
+            actualMedianDistanceMetres: valid.actualMedianDistanceMetres,
+            distanceStandardDeviation: valid.distanceStandardDeviation,
+            targets: valid.targets,
+            responses: Array(valid.responses.dropLast()),
+            correctCount: valid.correctCount - 1,
+            outcome: .pass,
+            quality: valid.quality,
+            responseSource: valid.responseSource,
+            transcript: valid.transcript
         )
-        guard case .completed(let result) = engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .fail)) else {
-            return XCTFail("Expected completed strong-boundary result")
+
+        XCTAssertEqual(
+            engine.submit(block: malformed),
+            .test(candidate: .init(diopter: -2.5), stage: .coarse)
+        )
+        guard case .completed(let result) = engine.submit(block: valid) else {
+            return XCTFail("A valid retry should complete")
         }
-        XCTAssertEqual(result.status, .strongerThanSupportedRange)
-        XCTAssertNil(result.displayedEstimateDiopter)
-        XCTAssertEqual(result.thresholdDistanceMetres, 0.4)
+        XCTAssertEqual(result.status, .experimentalTaskCompleted)
     }
 
-    func testBorderlineRepeatsOnceThenReturnsUnreliable() {
-        var engine = ThresholdSearchEngine(eye: .right)
-        let borderline = block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .borderline)
-        XCTAssertEqual(engine.submit(block: borderline), .test(candidate: .init(diopter: -2.5), stage: .coarse))
-        guard case .completed(let result) = engine.submit(block: borderline) else {
-            return XCTFail("Expected unreliable result")
+    func testActiveLandoltIntegrityRequiresExactlyOneValidBlockPerEye() {
+        for eye in Eye.allCases {
+            let valid = block(
+                eye: eye,
+                candidate: -2.5,
+                distance: 0.40,
+                outcome: .fail
+            )
+            var engine = ThresholdSearchEngine(eye: eye)
+            guard case .completed(let result) = engine.submit(block: valid) else {
+                return XCTFail("Expected neutral task completion")
+            }
+
+            XCTAssertTrue(
+                ResultIntegrityValidator.validate(result, against: [valid]).isValid
+            )
+            XCTAssertFalse(
+                ResultIntegrityValidator.validate(result, against: [valid, valid]).isValid
+            )
+
+            let malformed = TrialBlock(
+                eye: valid.eye,
+                candidateDiopter: valid.candidateDiopter,
+                targetDistanceMetres: valid.targetDistanceMetres,
+                actualMedianDistanceMetres: valid.actualMedianDistanceMetres,
+                distanceStandardDeviation: valid.distanceStandardDeviation,
+                targets: valid.targets,
+                responses: Array(valid.responses.dropLast()),
+                correctCount: valid.correctCount,
+                outcome: valid.outcome,
+                quality: valid.quality,
+                responseSource: valid.responseSource,
+                transcript: valid.transcript
+            )
+            XCTAssertFalse(
+                ResultIntegrityValidator.validate(result, against: [malformed]).isValid
+            )
         }
-        XCTAssertEqual(result.status, .unreliableMeasurement)
     }
 
     func testCalibrationAcceptanceRequiresAllDistancesAndEnoughAccuracy() throws {
@@ -607,7 +708,7 @@ final class MeasurementEngineTests: XCTestCase {
                 luminance: 0.5,
                 faceCount: 1
             ),
-            responseCount: 7,
+            responseCount: SequentialOptotypeSession.requiredTargetCount,
             audioLevelAdequate: true,
             targetGeometryValid: true,
             orientationChanged: false,
@@ -752,7 +853,7 @@ final class MeasurementEngineTests: XCTestCase {
         XCTAssertTrue(ResultIntegrityValidator.validate(safe).isValid)
     }
 
-    func testNumericEligibilityRequiresExactDeviceCalibrationEvidenceAndSecondFaceDetection() {
+    func testNumericEligibilityCannotBeUnlockedWithoutAnApprovedProtocolRelease() {
         let profile = DeviceProfile(
             schemaVersion: 1,
             profileVersion: 2,
@@ -832,7 +933,7 @@ final class MeasurementEngineTests: XCTestCase {
             supportsSecondFaceDetection: false,
             matchesExactRuntimeDevice: true
         ))
-        XCTAssertTrue(NumericResultEligibility.allowsNumericResults(
+        XCTAssertFalse(NumericResultEligibility.allowsNumericResults(
             profile: profile,
             supportsSecondFaceDetection: true,
             matchesExactRuntimeDevice: true
@@ -887,7 +988,10 @@ final class MeasurementEngineTests: XCTestCase {
     }
 
     func testConfirmationDisagreementReturnsNoReliableResult() {
-        var engine = ThresholdSearchEngine(eye: .right)
+        var engine = ThresholdSearchEngine(
+            eye: .right,
+            protocolDescriptor: futureClinicalDescriptor
+        )
         _ = engine.submit(block: block(eye: .right, candidate: -2.5, distance: 0.4, outcome: .pass))
         _ = engine.submit(block: block(eye: .right, candidate: -1.25, distance: 0.8, outcome: .fail))
         _ = engine.submit(block: block(eye: .right, candidate: -2, distance: 0.5, outcome: .fail))
@@ -987,7 +1091,7 @@ final class MeasurementEngineTests: XCTestCase {
         for key in [
             "presentationDistanceMetres", "renderedPixelHeight", "renderedPointHeight",
             "renderedAngularSizeArcMinutes", "actualAngularSizeArcMinutes",
-            "geometryDistanceDriftFraction"
+            "geometryDistanceDriftFraction", "presentedGeometry"
         ] {
             object.removeValue(forKey: key)
         }
@@ -1004,17 +1108,30 @@ final class MeasurementEngineTests: XCTestCase {
     }
 
     private func block(eye: Eye, candidate: Double, distance: Double, outcome: TrialOutcome) -> TrialBlock {
-        let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down]
-        let responses = outcome == .pass ? targets : Array(repeating: OptotypeDirection.left, count: 7)
+        let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down, .left]
+        let requiredCorrect = outcome == .pass ? 8 : outcome == .borderline ? 5 : 2
+        let responses = targets.enumerated().map { index, target in
+            index < requiredCorrect ? target : wrongDirection(for: target)
+        }
+        let targetDistance = 1 / abs(candidate)
+        let presentation = PresentedOptotypeGeometry.calculate(
+            distanceMetres: targetDistance,
+            pixelsPerInch: 460,
+            nativeScale: 3,
+            presentationMode: .phonePOCLocator
+        )!
+        let actualAngle = presentation.computedArcMinutes(at: distance)!
+        let renderedAngle = presentation.geometry.effectiveArcMinutes
+        let drift = abs(actualAngle - renderedAngle) / renderedAngle
         return TrialBlock(
             eye: eye,
             candidateDiopter: candidate,
-            targetDistanceMetres: 1 / abs(candidate),
+            targetDistanceMetres: targetDistance,
             actualMedianDistanceMetres: distance,
             distanceStandardDeviation: 0.008,
             targets: targets,
             responses: responses,
-            correctCount: outcome == .pass ? 7 : outcome == .borderline ? 4 : 2,
+            correctCount: requiredCorrect,
             outcome: outcome,
             quality: BlockQuality(
                 trackingCoverage: 0.98,
@@ -1026,7 +1143,14 @@ final class MeasurementEngineTests: XCTestCase {
                 discardReasons: []
             ),
             responseSource: .voice,
-            transcript: nil
+            transcript: nil,
+            presentationDistanceMetres: targetDistance,
+            renderedPixelHeight: presentation.geometry.pixelHeight,
+            renderedPointHeight: presentation.geometry.pointHeight,
+            renderedAngularSizeArcMinutes: renderedAngle,
+            actualAngularSizeArcMinutes: actualAngle,
+            geometryDistanceDriftFraction: drift,
+            presentedGeometry: presentation
         )
     }
 
@@ -1040,7 +1164,7 @@ final class MeasurementEngineTests: XCTestCase {
             distanceStandardDeviation: 0.2,
             targets: valid.targets,
             responses: valid.responses,
-            correctCount: 7,
+            correctCount: SequentialOptotypeSession.requiredTargetCount,
             outcome: .invalid,
             quality: BlockQuality(
                 trackingCoverage: 0.5,
@@ -1090,18 +1214,73 @@ final class MeasurementEngineTests: XCTestCase {
         )
     }
 
-    private func gaborTrial(contrast: Double, outcome: TrialOutcome) -> GaborTrial {
-        let targets: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left]
+    private func gaborTrial(
+        contrast: Double,
+        outcome: TrialOutcome,
+        eye: Eye = .right
+    ) -> GaborTrial {
+        let targets: [GaborOrientation] = [.left, .right, .left, .right, .left, .right, .left, .right]
+        let requiredCorrect = outcome == .pass ? 8 : outcome == .borderline ? 6 : 2
+        let responses = targets.enumerated().map { index, target in
+            index < requiredCorrect ? target : (target == .left ? .right : .left)
+        }
         return GaborTrial(
-            eye: .right,
+            eye: eye,
             contrast: contrast,
             targets: targets,
-            responses: targets,
-            correctCount: outcome == .pass ? 7 : 2,
+            responses: responses,
+            correctCount: requiredCorrect,
             outcome: outcome,
             responseSource: .voice,
-            transcript: nil
+            transcript: nil,
+            presentationGeometry: GaborPresentationGeometry(
+                pointDiameter: 360,
+                displayScale: 3
+            )!,
+            quality: BlockQuality(
+                trackingCoverage: 0.98,
+                phoneStable: true,
+                headPoseValid: true,
+                distanceStable: true,
+                audioLevelAdequate: true,
+                targetGeometryValid: true,
+                gazeCoverage: 0.98,
+                discardReasons: []
+            )
         )
+    }
+
+    private var futureClinicalDescriptor: LandoltProtocolDescriptor {
+        LandoltProtocolDescriptor(
+            identifier: "future-clinical-five-arcminute",
+            version: 1,
+            presentationMode: .clinicalFiveArcMinute,
+            responsesPerLevel: SequentialOptotypeSession.requiredTargetCount,
+            usesValidatedThresholdModel: true,
+            permitsPointSizeClamping: false
+        )
+    }
+
+    private func wrongDirection(for target: OptotypeDirection) -> OptotypeDirection {
+        switch target {
+        case .up: return .right
+        case .right: return .down
+        case .down: return .left
+        case .left: return .up
+        }
+    }
+
+    private func assertNoNumericPayload(
+        _ result: EyeScreeningResult,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertNil(result.lastFailDiopter, file: file, line: line)
+        XCTAssertNil(result.firstPassDiopter, file: file, line: line)
+        XCTAssertNil(result.displayedEstimateDiopter, file: file, line: line)
+        XCTAssertNil(result.thresholdDistanceMetres, file: file, line: line)
+        XCTAssertNil(result.sensorUncertaintyDiopter, file: file, line: line)
+        XCTAssertNil(result.repeatabilityDiopter, file: file, line: line)
     }
 
     private func attitude(rotationDegrees: Double) -> MotionAttitude {

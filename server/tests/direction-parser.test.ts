@@ -66,7 +66,13 @@ describe("direction parser", () => {
       "I see nothing",
       "It looks blurry to me",
       "I just can't quite see this one, sorry",
-      "It isn't clear enough"
+      "It isn't clear enough",
+      "I cannot see the circle from here",
+      "The stripes are not visible to me",
+      "I am not able to identify the direction",
+      "I can't tell which side it is",
+      "This one is too faint for me to see",
+      "I can see a shape but not the opening"
     ];
 
     for (const phrase of phrases) {
@@ -99,13 +105,20 @@ describe("direction parser", () => {
     expect(parseSingleDirectionAnswer("The target is not too small")).toBeNull();
   });
 
-  it("keeps filler words unknown to the strict seven-direction mode", () => {
+  it("keeps filler words visible to strict direction analysis", () => {
     expect(analyzeDirectionTranscript("up please").unknownTokens).toEqual(["please"]);
   });
 
   it("requires one unambiguous constrained choice", () => {
     expect(parseChoice("I choose option two", "contrast")).toBe("two");
     expect(parseChoice("yes definitely", "readAloud")).toBe("yes");
+    expect(parseChoice("I am not sure", "readAloud")).toBeNull();
+    expect(parseChoice("none of those apply to me", "eligibility")).toBe("no");
+    expect(parseChoice("nothing applies", "eligibility")).toBe("no");
+    expect(parseChoice("yes, one applies", "eligibility")).toBe("yes");
+    expect(parseChoice("something applies to me", "eligibility")).toBe("yes");
+    expect(parseChoice("yes, no", "eligibility")).toBeNull();
+    expect(parseChoice("I am not sure", "eligibility")).toBeNull();
     expect(parseChoice("larger please", "controls")).toBe("larger");
     expect(parseChoice("one or two", "simplified")).toBeNull();
   });

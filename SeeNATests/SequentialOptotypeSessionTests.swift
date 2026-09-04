@@ -3,13 +3,30 @@ import XCTest
 
 final class SequentialOptotypeSessionTests: XCTestCase {
     private let targets: [OptotypeDirection] = [
-        .up, .right, .down, .left, .right, .up, .down
+        .up, .right, .down, .left, .right, .up, .left, .down
     ]
 
-    func testRequiresExactlySevenTargets() {
-        XCTAssertNil(SequentialOptotypeSession(targets: Array(targets.prefix(6))))
-        XCTAssertNil(SequentialOptotypeSession(targets: targets + [.left]))
+    func testRequiresExactlyEightBalancedNonRepeatingTargets() {
+        XCTAssertNil(SequentialOptotypeSession(targets: Array(targets.prefix(7))))
+        XCTAssertNil(SequentialOptotypeSession(targets: targets + [.up]))
+        XCTAssertNil(SequentialOptotypeSession(targets: Array(repeating: .up, count: 8)))
+        XCTAssertNil(SequentialOptotypeSession(targets: [
+            .up, .up, .right, .down, .left, .right, .down, .left
+        ]))
         XCTAssertNotNil(SequentialOptotypeSession(targets: targets))
+    }
+
+    func testGeneratedSequenceIsDeterministicallyBalancedWithoutAdjacentRepeats() {
+        for seed in 1...64 {
+            var generator = OptotypeSeededGenerator(seed: UInt64(seed))
+            let generated = LandoltTargetSequence.make(using: &generator)
+
+            XCTAssertEqual(generated.count, 8)
+            for direction in OptotypeDirection.allCases {
+                XCTAssertEqual(generated.filter { $0 == direction }.count, 2)
+            }
+            XCTAssertFalse(zip(generated, generated.dropFirst()).contains { $0 == $1 })
+        }
     }
 
     func testStartsOnOnlyTheFirstTarget() throws {
@@ -58,18 +75,18 @@ final class SequentialOptotypeSessionTests: XCTestCase {
         XCTAssertNil(OptotypeResponse.notVisible.direction)
     }
 
-    func testNotVisibleScoresIncorrectWithoutInvalidatingSevenAnswers() {
+    func testNotVisibleScoresIncorrectWithoutInvalidatingEightAnswers() {
         let responses: [OptotypeResponse] = [
-            .notVisible, .right, .down, .left, .right, .up, .down
+            .notVisible, .right, .down, .left, .right, .up, .left, .down
         ]
         let correct = zip(targets, responses).reduce(into: 0) { count, pair in
             if pair.1.matches(pair.0) { count += 1 }
         }
 
-        XCTAssertEqual(responses.count, 7)
-        XCTAssertEqual(correct, 6)
+        XCTAssertEqual(responses.count, 8)
+        XCTAssertEqual(correct, 7)
         XCTAssertEqual(
-            TrialScorer.outcome(correctCount: correct, hasExactlySevenResponses: true),
+            TrialScorer.outcome(correctCount: correct, responseCount: responses.count),
             .pass
         )
     }
@@ -82,23 +99,39 @@ final class SequentialOptotypeSessionTests: XCTestCase {
         XCTAssertEqual(try JSONEncoder().encode(decoded), data)
     }
 
-    func testCompletesOnlyAfterSeventhAnswerAndCannotAdvanceAgain() throws {
+    func testCompletesOnlyAfterEighthAnswerAndCannotAdvanceAgain() throws {
         var session = try XCTUnwrap(SequentialOptotypeSession(targets: targets))
 
-        for index in 0..<6 {
+        for index in 0..<7 {
             XCTAssertEqual(session.submit(OptotypeResponse(targets[index])), .advanced)
             XCTAssertFalse(session.isComplete)
             XCTAssertEqual(session.currentIndex, index + 1)
         }
 
-        XCTAssertEqual(session.submit(OptotypeResponse(targets[6])), .completed)
+        XCTAssertEqual(session.submit(OptotypeResponse(targets[7])), .completed)
         XCTAssertTrue(session.isComplete)
-        XCTAssertEqual(session.currentIndex, 7)
+        XCTAssertEqual(session.currentIndex, 8)
         XCTAssertNil(session.currentTarget)
-        XCTAssertEqual(session.responses.count, 7)
+        XCTAssertEqual(session.responses.count, 8)
 
         XCTAssertEqual(session.submit(.left), .rejected)
-        XCTAssertEqual(session.currentIndex, 7)
-        XCTAssertEqual(session.responses.count, 7)
+        XCTAssertEqual(session.currentIndex, 8)
+        XCTAssertEqual(session.responses.count, 8)
+    }
+}
+
+private struct OptotypeSeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed == 0 ? 0x9E37_79B9_7F4A_7C15 : seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var value = state
+        value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+        return value ^ (value >> 31)
     }
 }

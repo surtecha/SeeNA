@@ -51,7 +51,9 @@ struct EyeTestView: View {
                 Button("Use operator response mode", action: showOperatorInput)
                     .buttonStyle(SecondaryActionStyle())
                     .frame(minHeight: 44)
-                    .accessibilityHint("Stops voice recording and opens seven large response controls")
+                    .accessibilityHint(
+                        "Stops voice recording and opens \(model.totalTrialCount) large response controls"
+                    )
             }
         }
         .padding(.horizontal, 20)
@@ -192,7 +194,10 @@ private struct OperatorInputView: View {
                     .frame(minHeight: 180)
                 }
 
-                Text("Target \(min(responses.count + 1, 7)) of 7")
+                Text(
+                    "Target \(min(responses.count + 1, SequentialOptotypeSession.requiredTargetCount)) "
+                        + "of \(SequentialOptotypeSession.requiredTargetCount)"
+                )
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
 
@@ -223,7 +228,7 @@ private struct OperatorInputView: View {
 
                     Button("Submit operator responses", action: submit)
                         .buttonStyle(PrimaryActionStyle())
-                        .disabled(responses.count != 7)
+                        .disabled(responses.count != SequentialOptotypeSession.requiredTargetCount)
                 }
                 .padding(24)
             }
@@ -238,7 +243,7 @@ private struct OperatorInputView: View {
     }
 
     private func add(_ response: OptotypeResponse) {
-        guard responses.count < 7 else { return }
+        guard responses.count < SequentialOptotypeSession.requiredTargetCount else { return }
         responses.append(response)
     }
 

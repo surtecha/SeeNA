@@ -1,3 +1,4 @@
+import AVFoundation
 import Observation
 import SwiftUI
 
@@ -6,24 +7,145 @@ import SwiftUI
 private final class SafetyEligibilityViewModel {
     enum Phase: Equatable { case question, selectReason, finished }
 
-    private(set) var phase: Phase = .question
-    private var hasBegun = false
+    enum VoiceState: Equatable {
+        case preparing
+        case speaking
+        case listening
+        case checking
+        case touchFallback
 
-    func begin(dependencies: AppDependencies) async {
-        guard !hasBegun else { return }
-        hasBegun = true
-        _ = await dependencies.spokenPrompts.speakAndWait(
-            "Safety check. Read the exclusions on screen. Tap No, none apply to continue, or Yes, one applies to stop."
-        )
+        var statusText: String {
+            switch self {
+            case .preparing: return "Preparing voice"
+            case .speaking: return "Listen for the question"
+            case .listening: return "Listening for yes or no"
+            case .checking: return "Checking your answer"
+            case .touchFallback: return "Tap yes or no below"
+            }
+        }
+
+        var isListening: Bool { self == .listening }
+
+        var systemImage: String {
+            switch self {
+            case .preparing: return "ellipsis"
+            case .speaking: return "speaker.wave.2.fill"
+            case .listening: return "waveform"
+            case .checking: return "checkmark.circle"
+            case .touchFallback: return "hand.tap"
+            }
+        }
+    }
+
+    private(set) var phase: Phase = .question
+    private(set) var voiceState: VoiceState = .preparing
+    @ObservationIgnored private var conversationID: UUID?
+    @ObservationIgnored private var auxiliaryTask: Task<Void, Never>?
+
+    private let safetyQuestion = "Safety check. Say yes for sudden vision loss, severe eye pain or injury, contact lenses in, being under eighteen, or being unable to move safely. Otherwise, say no."
+    private let retryQuestion = "Please say yes if any item applies, or no if none apply."
+
+    func begin(session: AppSession, dependencies: AppDependencies) async {
+        guard phase == .question, conversationID == nil else { return }
+        let conversationID = UUID()
+        self.conversationID = conversationID
+        defer {
+            if self.conversationID == conversationID {
+                self.conversationID = nil
+            }
+        }
+
+        voiceState = .preparing
+        if AVAudioApplication.shared.recordPermission == .undetermined {
+            voiceState = .speaking
+            _ = await dependencies.spokenPrompts.speakForTransition(
+                "To answer hands-free, SeeNA needs microphone access. Tap Allow."
+            )
+            guard isCurrent(conversationID, session: session) else { return }
+        }
+        let microphoneAllowed = await dependencies.audioRecorder.requestPermission()
+        guard isCurrent(conversationID, session: session) else { return }
+
+        var prompt = safetyQuestion
+        var failedAttempts = 0
+
+        while isCurrent(conversationID, session: session) {
+            voiceState = .speaking
+            let speechOutcome = await dependencies.spokenPrompts.speakAndWait(prompt)
+            guard isCurrent(conversationID, session: session) else { return }
+            guard SpeechProgressionPolicy.shouldAdvance(after: speechOutcome) else {
+                voiceState = .touchFallback
+                return
+            }
+
+            guard microphoneAllowed,
+                  session.responseMode == .voicePreferred,
+                  dependencies.network.isConnected else {
+                await announceTouchFallback(conversationID, session: session, dependencies: dependencies)
+                return
+            }
+
+            do {
+                voiceState = .listening
+                let recording = try await dependencies.audioRecorder.record(maximumDuration: 8)
+                defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
+                guard isCurrent(conversationID, session: session) else { return }
+
+                if recording.adequateLevel {
+                    voiceState = .checking
+                    let response = try await dependencies.backend.transcribe(
+                        audioURL: recording.fileURL,
+                        mode: .constrainedChoice,
+                        phraseID: "safety-eligibility",
+                        choiceSetID: "eligibility"
+                    )
+                    guard isCurrent(conversationID, session: session) else { return }
+
+                    if response.valid, response.choice == "no" {
+                        answer(hasExclusion: false, session: session, dependencies: dependencies)
+                        return
+                    }
+                    if response.valid, response.choice == "yes" {
+                        answer(hasExclusion: true, session: session, dependencies: dependencies)
+                        return
+                    }
+                }
+
+                failedAttempts += 1
+            } catch is CancellationError {
+                return
+            } catch {
+                guard isCurrent(conversationID, session: session) else { return }
+                failedAttempts += 1
+            }
+
+            guard failedAttempts < 2, dependencies.network.isConnected else {
+                await announceTouchFallback(conversationID, session: session, dependencies: dependencies)
+                return
+            }
+            prompt = retryQuestion
+        }
     }
 
     func answer(hasExclusion: Bool, session: AppSession, dependencies: AppDependencies) {
         guard phase == .question else { return }
+        conversationID = nil
+        auxiliaryTask?.cancel()
+        auxiliaryTask = nil
+        dependencies.audioRecorder.stop()
         dependencies.spokenPrompts.stop()
         HapticFeedback.impact()
         if hasExclusion {
             phase = .selectReason
-            dependencies.spokenPrompts.speak("Choose the reason that applies so I can show the right safety guidance.")
+            auxiliaryTask = Task { [weak self] in
+                guard let self else { return }
+                _ = await dependencies.spokenPrompts.speakAndWait(
+                    "Choose the reason that applies so I can show the right safety guidance."
+                )
+                guard !Task.isCancelled,
+                      self.phase == .selectReason,
+                      session.path.last == .eligibility else { return }
+            }
         } else {
             phase = .finished
             session.navigate(to: .permissions)
@@ -34,15 +156,54 @@ private final class SafetyEligibilityViewModel {
         guard phase == .selectReason else { return }
         phase = .finished
         session.safetyStopReason = reason
+        auxiliaryTask?.cancel()
+        auxiliaryTask = nil
+        dependencies.audioRecorder.stop()
         dependencies.spokenPrompts.stop()
         session.navigate(to: .safetyStop)
     }
 
-    func backToQuestion() { phase = .question }
+    func backToQuestion(session: AppSession, dependencies: AppDependencies) {
+        guard phase == .selectReason else { return }
+        auxiliaryTask?.cancel()
+        auxiliaryTask = nil
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
+        phase = .question
+        voiceState = .preparing
+        auxiliaryTask = Task { [weak self] in
+            await self?.begin(session: session, dependencies: dependencies)
+        }
+    }
 
     func cancel(dependencies: AppDependencies) {
-        hasBegun = false
+        conversationID = nil
+        auxiliaryTask?.cancel()
+        auxiliaryTask = nil
+        voiceState = .preparing
+        dependencies.audioRecorder.stop()
         dependencies.spokenPrompts.stop()
+    }
+
+    private func isCurrent(_ id: UUID, session: AppSession) -> Bool {
+        !Task.isCancelled
+            && conversationID == id
+            && phase == .question
+            && session.path.last == .eligibility
+    }
+
+    private func announceTouchFallback(
+        _ id: UUID,
+        session: AppSession,
+        dependencies: AppDependencies
+    ) async {
+        guard isCurrent(id, session: session) else { return }
+        voiceState = .speaking
+        _ = await dependencies.spokenPrompts.speakAndWait(
+            "Voice answers are unavailable right now. Please tap yes or no below."
+        )
+        guard isCurrent(id, session: session) else { return }
+        voiceState = .touchFallback
     }
 }
 
@@ -77,7 +238,9 @@ struct EligibilityView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(SEENATheme.card, in: RoundedRectangle(cornerRadius: 16))
 
-                    Text("Remove glasses for the task. This check happens before SeeNA asks for camera or microphone access.")
+                    EligibilityVoiceStatus(state: model.voiceState)
+
+                    Text("Remove glasses for the task. Say yes or no, or use the large buttons.")
                         .font(.body)
                         .foregroundStyle(SEENATheme.secondaryInk)
 
@@ -99,7 +262,7 @@ struct EligibilityView: View {
         }
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden()
-        .task { await model.begin(dependencies: dependencies) }
+        .task { await model.begin(session: session, dependencies: dependencies) }
         .onDisappear { model.cancel(dependencies: dependencies) }
     }
 
@@ -112,9 +275,30 @@ struct EligibilityView: View {
                 .buttonStyle(SecondaryActionStyle())
                 .frame(minHeight: 44)
             }
-            Button("Back", action: model.backToQuestion)
+            Button("Back") {
+                model.backToQuestion(session: session, dependencies: dependencies)
+            }
                 .frame(minHeight: 44)
         }
+    }
+}
+
+private struct EligibilityVoiceStatus: View {
+    let state: SafetyEligibilityViewModel.VoiceState
+
+    var body: some View {
+        Label(
+            state.statusText,
+            systemImage: state.systemImage
+        )
+        .font(.headline.weight(.semibold))
+        .foregroundStyle(SEENATheme.ink)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .background(SEENATheme.strongCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(state.statusText)
     }
 }
 

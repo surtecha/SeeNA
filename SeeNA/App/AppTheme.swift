@@ -5,9 +5,10 @@ enum SEENATheme {
     static let card = Color.black.opacity(0.045)
     static let strongCard = Color.black.opacity(0.08)
     static let ink = Color.black
-    static let secondaryInk = Color.black.opacity(0.58)
-    static let tertiaryInk = Color.black.opacity(0.38)
-    static let line = Color.black.opacity(0.12)
+    static let secondaryInk = Color.black.opacity(0.68)
+    static let tertiaryInk = Color.black.opacity(0.52)
+    static let line = Color.black.opacity(0.16)
+    static let controlBorder = Color.black.opacity(0.44)
 
     // Retained as a semantic compatibility alias for measurement-ready UI.
     static let teal = ink
@@ -86,61 +87,84 @@ struct ActionScaffold<Content: View>: View {
                 VStack(alignment: .leading, spacing: 24) {
                     PageHeader(eyebrow: eyebrow, title: title, subtitle: subtitle)
                     content
+
+                    if dynamicTypeSize.isAccessibilitySize {
+                        actionPanel
+                            .padding(.top, 4)
+                    }
                 }
                 .frame(maxWidth: 680, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 18)
-                .padding(.bottom, 132)
+                .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 24 : 132)
                 .frame(maxWidth: .infinity)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 7) {
-                GlassEffectContainer(spacing: 12) {
-                    Group {
-                        if dynamicTypeSize.isAccessibilitySize {
-                            VStack(spacing: 12) { actionButtons }
-                        } else {
-                            HStack(spacing: 12) { actionButtons }
-                        }
+            if !dynamicTypeSize.isAccessibilitySize {
+                actionPanel
+            }
+        }
+    }
+
+    private var actionPanel: some View {
+        VStack(spacing: 7) {
+            GlassEffectContainer(spacing: 12) {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 12) { actionButtons }
+                    } else {
+                        HStack(spacing: 12) { actionButtons }
                     }
                 }
-
-                Text(SEENATheme.screeningFooter)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(SEENATheme.secondaryInk)
-                    .accessibilityLabel("Vision screening. This is not an eyeglass prescription or diagnosis.")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+
+            Text(SEENATheme.screeningFooter)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(SEENATheme.secondaryInk)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Vision screening. This is not an eyeglass prescription or diagnosis.")
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(SEENATheme.background.opacity(0.98))
     }
 
     @ViewBuilder
     private var actionButtons: some View {
-                        if let secondaryAction {
-                            Button(action: secondaryAction.action) {
-                                Image(systemName: secondaryAction.systemImage)
-                                    .font(.headline.weight(.semibold))
-                                    .frame(width: 54, height: 54)
-                            }
-                            .buttonStyle(.glass)
-                            .accessibilityLabel(secondaryAction.title)
-                        }
+        if let secondaryAction {
+            Button(action: secondaryAction.action) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    Label(secondaryAction.title, systemImage: secondaryAction.systemImage)
+                        .font(.headline.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 14)
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                } else {
+                    Image(systemName: secondaryAction.systemImage)
+                        .font(.headline.weight(.semibold))
+                        .frame(width: 54, height: 54)
+                }
+            }
+            .buttonStyle(.glass)
+            .accessibilityLabel(secondaryAction.title)
+        }
 
-                        Button(action: primaryAction) {
-                            Label(primaryTitle, systemImage: primarySystemImage)
-                                .font(.headline.weight(.semibold))
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.vertical, 14)
-                                .frame(maxWidth: .infinity)
-                                .frame(minHeight: 54)
-                        }
-                        .buttonStyle(.glassProminent)
-                        .tint(SEENATheme.ink)
-                        .disabled(!primaryEnabled)
+        Button(action: primaryAction) {
+            Label(primaryTitle, systemImage: primarySystemImage)
+                .font(.headline.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 54)
+        }
+        .buttonStyle(.glassProminent)
+        .tint(SEENATheme.ink)
+        .disabled(!primaryEnabled)
     }
 }
 
@@ -179,7 +203,7 @@ struct SecondaryActionStyle: ButtonStyle {
             .foregroundStyle(isEnabled ? SEENATheme.ink : SEENATheme.tertiaryInk)
             .background(SEENATheme.background, in: Capsule())
             .overlay {
-                Capsule().stroke(SEENATheme.line, lineWidth: 1)
+                Capsule().stroke(SEENATheme.controlBorder, lineWidth: 1)
             }
             .opacity(configuration.isPressed ? 0.72 : 1)
             .scaleEffect(configuration.isPressed ? 0.985 : 1)

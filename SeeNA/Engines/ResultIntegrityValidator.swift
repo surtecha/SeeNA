@@ -11,6 +11,7 @@ enum ResultIntegrityIssue: String, CaseIterable, Equatable, Sendable {
     case nonFiniteDistance
     case nonPositiveDistance
     case nonFiniteDiopter
+    case nonMyopicDiopter
     case nonQuarterDiopter
     case farPointMismatch
     case invalidBracketOrdering
@@ -29,6 +30,8 @@ enum ResultIntegrityIssue: String, CaseIterable, Equatable, Sendable {
     case uncertaintyExceedsBracket
     case repeatabilityExceedsBracket
     case uncertaintyExceedsProfile
+    case numericProtocolNotApproved
+    case inconsistentQualityState
 }
 
 /// Compact, deterministic result of a local data-consistency validation.
@@ -43,7 +46,13 @@ enum ResultIntegrityValidator {
     private static let tolerance = 0.000_001
     private static let maximumBracketWidth = 0.25
     private static let supportedClosestDiopter = -2.50
+    /// Release-locked future clinical protocol boundary. Do not derive the
+    /// active near-range locator limit from this value.
     private static let supportedFarthestDiopter = -0.50
+    /// Historical qualitative boundary retained only for integrity replay of
+    /// previously saved locator sessions. The current active task never
+    /// presents this 0.80 m candidate.
+    private static let legacyPhoneQualitativeFarthestDiopter = -1.25
 
     static func validate(_ result: EyeScreeningResult) -> ResultIntegrityValidation {
         var issues: Set<ResultIntegrityIssue> = []
@@ -89,6 +98,10 @@ enum ResultIntegrityValidator {
             issues.insert(.thresholdOutsideValidatedRange)
         }
         validateProfilePrecision(result, profile: profile, issues: &issues)
+        if profile != nil, isNumericStatus(result.status),
+           !NumericResultEligibility.hasApprovedNumericProtocolRelease {
+            issues.insert(.numericProtocolNotApproved)
+        }
 
         switch result.status {
         case .validEstimate:
@@ -139,7 +152,7 @@ enum ResultIntegrityValidator {
             requireWitnesses(
                 trials,
                 eye: result.eye,
-                candidate: supportedFarthestDiopter,
+                candidate: legacyPhoneQualitativeFarthestDiopter,
                 outcome: .pass,
                 minimumCount: 2,
                 thresholdDistance: nil,
@@ -158,7 +171,7 @@ enum ResultIntegrityValidator {
         case .experimentalThresholdObserved:
             requireQualitativeThresholdWitnesses(trials, eye: result.eye, issues: &issues)
         case .experimentalTaskCompleted:
-            requireLegacyExperimentalWitness(trials, eye: result.eye, issues: &issues)
+            requireActiveTaskWitness(trials, eye: result.eye, issues: &issues)
         case .unreliableMeasurement, .deviceUnsupported, .userIneligible:
             break
         }
@@ -187,15 +200,29 @@ enum ResultIntegrityValidator {
         if !hasBracket { issues.insert(.missingSupportingEvidence) }
     }
 
-    private static func requireLegacyExperimentalWitness(
+    private static func requireActiveTaskWitness(
         _ trials: [TrialBlock],
         eye: Eye,
         issues: inout Set<ResultIntegrityIssue>
     ) {
         let eyeTrials = trials.filter { $0.eye == eye }
-        let valid = eyeTrials.filter(isWellFormedWitness)
-        if eyeTrials.count != valid.count { issues.insert(.malformedSupportingEvidence) }
-        if valid.isEmpty { issues.insert(.missingSupportingEvidence) }
+        let valid = eyeTrials.filter {
+            isWellFormedWitness($0) &&
+                approximatelyEqual($0.candidateDiopter, supportedClosestDiopter) &&
+                approximatelyEqual($0.targetDistanceMetres, 0.40)
+        }
+
+        // Rejected retry attempts are retained for audit and do not poison a
+        // later valid block. An accepted-looking but malformed block does.
+        if eyeTrials.contains(where: { trial in
+            guard trial.outcome != .invalid else { return false }
+            return !isWellFormedWitness(trial) ||
+                !approximatelyEqual(trial.candidateDiopter, supportedClosestDiopter) ||
+                !approximatelyEqual(trial.targetDistanceMetres, 0.40)
+        }) {
+            issues.insert(.malformedSupportingEvidence)
+        }
+        if valid.count != 1 { issues.insert(.missingSupportingEvidence) }
     }
 
     private static func validateEstimate(
@@ -213,6 +240,7 @@ enum ResultIntegrityValidator {
         }
 
         validateDistance(distance, issues: &issues)
+        validateNumericResultQuality(result, issues: &issues)
         validateNonNegative(uncertainty, nonFinite: .nonFiniteUncertainty, negative: .negativeUncertainty, issues: &issues)
         validateNonNegative(repeatability, nonFinite: .nonFiniteRepeatability, negative: .negativeRepeatability, issues: &issues)
         validateBracket(lastFail: lastFail, firstPass: firstPass, issues: &issues)
@@ -272,6 +300,7 @@ enum ResultIntegrityValidator {
             return
         }
         validateDistance(distance, issues: &issues)
+        validateNumericResultQuality(result, issues: &issues)
         validateNonNegative(uncertainty, nonFinite: .nonFiniteUncertainty, negative: .negativeUncertainty, issues: &issues)
         validateNonNegative(repeatability, nonFinite: .nonFiniteRepeatability, negative: .negativeRepeatability, issues: &issues)
     }
@@ -316,6 +345,16 @@ enum ResultIntegrityValidator {
         if value < 0 { issues.insert(negative) }
     }
 
+    private static func validateNumericResultQuality(
+        _ result: EyeScreeningResult,
+        issues: inout Set<ResultIntegrityIssue>
+    ) {
+        let trackingIsUsable = result.trackingQuality == .good || result.trackingQuality == .moderate
+        if !trackingIsUsable || result.responseConsistency != .good {
+            issues.insert(.inconsistentQualityState)
+        }
+    }
+
     private static func validateBracket(
         lastFail: Double,
         firstPass: Double,
@@ -324,6 +363,13 @@ enum ResultIntegrityValidator {
         guard lastFail.isFinite, firstPass.isFinite else {
             issues.insert(.nonFiniteDiopter)
             return
+        }
+        if lastFail >= 0 || firstPass >= 0 ||
+            lastFail < supportedClosestDiopter - tolerance ||
+            lastFail > supportedFarthestDiopter + tolerance ||
+            firstPass < supportedClosestDiopter - tolerance ||
+            firstPass > supportedFarthestDiopter + tolerance {
+            issues.insert(.nonMyopicDiopter)
         }
         if !isQuarterDiopter(lastFail) || !isQuarterDiopter(firstPass) {
             issues.insert(.nonQuarterDiopter)
@@ -342,14 +388,23 @@ enum ResultIntegrityValidator {
             issues.insert(.nonFiniteDiopter)
             return
         }
+        if displayed >= 0 ||
+            displayed < supportedClosestDiopter - tolerance ||
+            displayed > supportedFarthestDiopter + tolerance {
+            issues.insert(.nonMyopicDiopter)
+        }
         if !isQuarterDiopter(displayed) { issues.insert(.nonQuarterDiopter) }
         guard distance.isFinite, distance > 0 else { return }
-        let expected = RefractionEstimator.roundedToQuarterDiopter(-1 / distance)
-        if !approximatelyEqual(displayed, expected) { issues.insert(.farPointMismatch) }
+        guard let measured = RefractionEstimator.diopter(forDistanceMetres: distance) else { return }
+        let expected = RefractionEstimator.roundedToQuarterDiopter(measured)
+        if !expected.isFinite || !approximatelyEqual(displayed, expected) {
+            issues.insert(.farPointMismatch)
+        }
     }
 
     private static func isQuarterDiopter(_ value: Double) -> Bool {
-        approximatelyEqual(value, RefractionEstimator.roundedToQuarterDiopter(value))
+        let rounded = RefractionEstimator.roundedToQuarterDiopter(value)
+        return rounded.isFinite && approximatelyEqual(value, rounded)
     }
 
     private static func requireWitnesses(
@@ -378,6 +433,14 @@ enum ResultIntegrityValidator {
 
     private static func isWellFormedWitness(_ block: TrialBlock) -> Bool {
         guard block.quality.isValid,
+              block.quality.trackingCoverage.isFinite,
+              (0...1).contains(block.quality.trackingCoverage),
+              block.quality.phoneStable,
+              block.quality.headPoseValid,
+              block.quality.distanceStable,
+              block.quality.audioLevelAdequate,
+              block.quality.targetGeometryValid,
+              block.quality.gazeCoverage.map({ $0.isFinite && (0...1).contains($0) }) != false,
               block.candidateDiopter.isFinite,
               block.candidateDiopter >= supportedClosestDiopter - tolerance,
               block.candidateDiopter <= supportedFarthestDiopter + tolerance,
@@ -389,8 +452,8 @@ enum ResultIntegrityValidator {
               block.actualMedianDistanceMetres > 0,
               block.distanceStandardDeviation.isFinite,
               block.distanceStandardDeviation >= 0,
-              block.targets.count == 7,
-              block.responses.count == 7,
+              SequentialOptotypeSession.isValidTargetSequence(block.targets),
+              block.responses.count == SequentialOptotypeSession.requiredTargetCount,
               geometryEvidenceIsWellFormed(block) else {
             return false
         }
@@ -398,53 +461,64 @@ enum ResultIntegrityValidator {
             if pair.1.matches(pair.0) { count += 1 }
         }
         return block.correctCount == correctCount &&
-            block.outcome == TrialScorer.outcome(correctCount: correctCount, hasExactlySevenResponses: true)
+            block.outcome == TrialScorer.outcome(
+                correctCount: correctCount,
+                responseCount: block.responses.count
+            )
     }
 
     private static func geometryEvidenceIsWellFormed(_ block: TrialBlock) -> Bool {
-        if let frozen = block.presentedGeometry {
-            guard frozen.presentationDistanceMetres.isFinite,
-                  frozen.presentationDistanceMetres > 0,
-                  frozen.nativeScale.isFinite,
-                  frozen.nativeScale > 0,
-                  frozen.pixelsPerInch.isFinite,
-                  frozen.pixelsPerInch > 0,
-                  frozen.geometry.pixelHeight > 0,
-                  frozen.geometry.pixelHeight.isMultiple(of: 5),
-                  abs(frozen.geometry.pointHeight - Double(frozen.geometry.pixelHeight) / frozen.nativeScale) <= tolerance,
-                  block.presentationDistanceMetres.map({ approximatelyEqual($0, frozen.presentationDistanceMetres) }) == true,
-                  block.renderedPixelHeight == frozen.geometry.pixelHeight,
-                  block.renderedPointHeight.map({ approximatelyEqual($0, frozen.geometry.pointHeight) }) == true,
-                  block.renderedAngularSizeArcMinutes.map({ approximatelyEqual($0, frozen.geometry.effectiveArcMinutes) }) == true else {
-                return false
-            }
-        }
-        let valuesPresent = [
-            block.presentationDistanceMetres != nil,
-            block.renderedPixelHeight != nil,
-            block.renderedPointHeight != nil,
-            block.renderedAngularSizeArcMinutes != nil,
-            block.actualAngularSizeArcMinutes != nil,
-            block.geometryDistanceDriftFraction != nil
-        ]
-        // Legacy sessions did not persist rendered geometry.
-        guard valuesPresent.contains(true) else { return true }
-        guard valuesPresent.allSatisfy({ $0 }),
+        // Legacy blocks with nil geometry remain Codable so their history can
+        // still be viewed, but they cannot serve as reliable evidence. Every
+        // current reliable witness must carry both the frozen presentation and
+        // the complete scalar geometry audit trail.
+        guard let frozen = block.presentedGeometry,
+              let recalculated = PresentedOptotypeGeometry.calculate(
+                distanceMetres: frozen.presentationDistanceMetres,
+                pixelsPerInch: frozen.pixelsPerInch,
+                nativeScale: frozen.nativeScale,
+                presentationMode: frozen.geometry.presentationMode
+              ),
               let presentationDistance = block.presentationDistanceMetres,
               let pixelHeight = block.renderedPixelHeight,
               let pointHeight = block.renderedPointHeight,
               let renderedAngle = block.renderedAngularSizeArcMinutes,
               let actualAngle = block.actualAngularSizeArcMinutes,
               let drift = block.geometryDistanceDriftFraction,
+              frozen.presentationDistanceMetres.isFinite,
+              frozen.presentationDistanceMetres > 0,
+              frozen.nativeScale.isFinite,
+              frozen.nativeScale > 0,
+              frozen.pixelsPerInch.isFinite,
+              frozen.pixelsPerInch > 0,
+              frozen.geometry.pixelHeight > 0,
+              frozen.geometry.pixelHeight.isMultiple(of: 5),
+              frozen.geometry.strokePixels * 5 == frozen.geometry.pixelHeight,
+              frozen.geometry.innerDiameterPixels + frozen.geometry.strokePixels * 2 == frozen.geometry.pixelHeight,
+              frozen.geometry.gapPixels == frozen.geometry.strokePixels,
+              frozen.geometry.requestedArcMinutes.isFinite,
+              frozen.geometry.requestedArcMinutes > 0,
+              frozen.geometry.effectiveArcMinutes.isFinite,
+              frozen.geometry.effectiveArcMinutes > 0,
+              frozen.geometry == recalculated.geometry,
+              abs(frozen.geometry.pointHeight - Double(frozen.geometry.pixelHeight) / frozen.nativeScale) <= tolerance,
               presentationDistance.isFinite,
               presentationDistance > 0,
+              approximatelyEqual(presentationDistance, frozen.presentationDistanceMetres),
               pixelHeight > 0,
+              pixelHeight == frozen.geometry.pixelHeight,
               pointHeight.isFinite,
               pointHeight > 0,
+              approximatelyEqual(pointHeight, frozen.geometry.pointHeight),
               renderedAngle.isFinite,
               renderedAngle > 0,
+              approximatelyEqual(renderedAngle, frozen.geometry.effectiveArcMinutes),
               actualAngle.isFinite,
               actualAngle > 0,
+              let recomputedActualAngle = frozen.computedArcMinutes(
+                at: block.actualMedianDistanceMetres
+              ),
+              approximatelyEqual(actualAngle, recomputedActualAngle),
               drift.isFinite,
               drift >= 0,
               drift <= 0.10 + tolerance else { return false }
@@ -468,9 +542,24 @@ enum ResultIntegrityValidator {
         let maximumDistanceSD = distance < 1
             ? profile.qualityThresholds.maximumDistanceSDNearMetres
             : profile.qualityThresholds.maximumDistanceSDFarMetres
-        let maximumUncertainty = maximumDistanceSD / pow(distance, 2)
+        guard let maximumUncertainty = RefractionEstimator.sensorUncertainty(
+            distanceMetres: distance,
+            standardDeviationMetres: maximumDistanceSD
+        ) else {
+            issues.insert(.uncertaintyExceedsProfile)
+            return
+        }
         if uncertainty > maximumUncertainty + tolerance {
             issues.insert(.uncertaintyExceedsProfile)
+        }
+    }
+
+    private static func isNumericStatus(_ status: ScreeningStatus) -> Bool {
+        switch status {
+        case .validEstimate, .noMyopiaDetectedWithinRange, .strongerThanSupportedRange:
+            return true
+        default:
+            return false
         }
     }
 
@@ -497,8 +586,6 @@ struct GaborResultIntegrityValidation: Equatable, Sendable {
 }
 
 enum GaborResultIntegrityValidator {
-    private static let tolerance = 0.000_001
-
     static func validate(
         _ result: GaborScreeningResult,
         against trials: [GaborTrial]
@@ -509,7 +596,7 @@ enum GaborResultIntegrityValidator {
         if trials.contains(where: { $0.eye != result.eye }) {
             issues.insert(.wrongEyeEvidence)
         }
-        if trials.contains(where: { !isWellFormed($0) }) {
+        if trials.contains(where: { !GaborContrastEngine.isWellFormedTrialEvidence($0) }) {
             issues.insert(.malformedSupportingEvidence)
         }
 
@@ -538,26 +625,6 @@ enum GaborResultIntegrityValidator {
         }
 
         return validation(issues)
-    }
-
-    private static func isWellFormed(_ trial: GaborTrial) -> Bool {
-        guard trial.contrast.isFinite,
-              trial.contrast > 0,
-              trial.contrast <= 1,
-              GaborContrastEngine.contrastLevels.contains(where: {
-                  abs($0 - trial.contrast) <= tolerance
-              }),
-              trial.targets.count == SequentialGaborSession.requiredTargetCount,
-              trial.responses.count == SequentialGaborSession.requiredTargetCount else {
-            return false
-        }
-
-        let correct = GaborScorer.correctCount(targets: trial.targets, responses: trial.responses)
-        return trial.correctCount == correct
-            && trial.outcome == GaborScorer.outcome(
-                correctCount: correct,
-                hasExactlySevenResponses: true
-            )
     }
 
     private static func validation(

@@ -30,8 +30,8 @@ struct ResultPair: View {
             Text("\(eye.displayName) eye")
                 .font(.title3.bold())
             Divider()
-            ResultMetric(label: "Landolt C", value: landoltValue)
-            ResultMetric(label: "Gabor pattern task", value: gaborValue)
+            ResultMetric(label: "Circle task", value: landoltValue)
+            ResultMetric(label: "Pattern task", value: gaborValue)
         }
         .padding(16)
         .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
@@ -47,9 +47,9 @@ struct ResultPair: View {
     }
 
     private var gaborValue: String {
-        if gaborIntegrity?.isValid == false { return "Repeat needed · evidence review required" }
+        if gaborIntegrity?.isValid == false { return "Repeat needed" }
         guard let gabor, gabor.status == .completed else { return "Repeat needed" }
-        return "Completed"
+        return "Task complete"
     }
 
     static func spokenSummary(
@@ -69,12 +69,12 @@ struct ResultPair: View {
         )
 
         if gaborIntegrity?.isValid == false {
-            return "\(landoltText) The Gabor pattern task needs repeating."
+            return "\(landoltText) \(eyeName) eye pattern task needs repeating."
         }
         if gabor?.status == .completed {
-            return "\(landoltText) \(eyeName) eye Gabor pattern task complete."
+            return "\(landoltText) \(eyeName) eye pattern task complete."
         }
-        return "\(landoltText) The Gabor pattern task needs repeating."
+        return "\(landoltText) \(eyeName) eye pattern task needs repeating."
     }
 }
 

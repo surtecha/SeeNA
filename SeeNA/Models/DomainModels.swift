@@ -113,6 +113,152 @@ enum GaborScreeningStatus: String, Codable, Sendable {
     case unreliableMeasurement
 }
 
+/// Structured evidence for the exact Gabor patch raster shown during one
+/// scored block. These are renderer inputs and display geometry, not a claim
+/// that the screen's luminance or contrast has been clinically calibrated.
+struct GaborPresentationGeometry: Codable, Equatable, Sendable {
+    static let currentEvidenceSchemaVersion = 1
+    static let currentRendererVersion = 1
+    static let currentCarrierCyclesPerPatch = 4.2
+    static let currentGaussianSigmaFraction = 0.22
+    static let currentOrientationMagnitudeDegrees = 45.0
+    static let currentCarrierPhaseRadians = 0.0
+    static let currentMeanLuminance = 0.5
+    static let currentContrastAmplitudeScale = 0.5
+
+    static let minimumRasterPixelDiameter = 48
+    static let maximumRasterPixelDiameter = 2_048
+    private static let maximumDisplayScale = 8.0
+    private static let floatingPointTolerance = 0.000_000_001
+
+    let evidenceSchemaVersion: Int
+    let rendererVersion: Int
+    let pointDiameter: Double
+    let rasterPixelDiameter: Int
+    let displayScale: Double
+    let carrierCyclesPerPatch: Double
+    let gaussianSigmaFraction: Double
+    let orientationMagnitudeDegrees: Double
+    let carrierPhaseRadians: Double
+    let meanLuminance: Double
+    let contrastAmplitudeScale: Double
+
+    /// Creates canonical evidence from SwiftUI's measured point diameter and
+    /// native display scale. The stored point diameter is derived back from the
+    /// rounded raster, so all three geometry values describe the same pixels.
+    init?(pointDiameter: Double, displayScale: Double) {
+        guard pointDiameter.isFinite,
+              displayScale.isFinite,
+              pointDiameter > 0,
+              (1...Self.maximumDisplayScale).contains(displayScale) else {
+            return nil
+        }
+        let rawPixelDiameter = pointDiameter * displayScale
+        guard rawPixelDiameter.isFinite,
+              rawPixelDiameter >= Double(Self.minimumRasterPixelDiameter),
+              rawPixelDiameter <= Double(Self.maximumRasterPixelDiameter) else {
+            return nil
+        }
+        let rasterPixelDiameter = Int(rawPixelDiameter.rounded())
+        self.init(
+            evidenceSchemaVersion: Self.currentEvidenceSchemaVersion,
+            rendererVersion: Self.currentRendererVersion,
+            pointDiameter: Double(rasterPixelDiameter) / displayScale,
+            rasterPixelDiameter: rasterPixelDiameter,
+            displayScale: displayScale,
+            carrierCyclesPerPatch: Self.currentCarrierCyclesPerPatch,
+            gaussianSigmaFraction: Self.currentGaussianSigmaFraction,
+            orientationMagnitudeDegrees: Self.currentOrientationMagnitudeDegrees,
+            carrierPhaseRadians: Self.currentCarrierPhaseRadians,
+            meanLuminance: Self.currentMeanLuminance,
+            contrastAmplitudeScale: Self.currentContrastAmplitudeScale
+        )
+    }
+
+    /// Used by decoding and integrity tests. Callers must verify
+    /// `isValidCurrentEvidence` before treating these values as trusted.
+    init(
+        evidenceSchemaVersion: Int,
+        rendererVersion: Int,
+        pointDiameter: Double,
+        rasterPixelDiameter: Int,
+        displayScale: Double,
+        carrierCyclesPerPatch: Double,
+        gaussianSigmaFraction: Double,
+        orientationMagnitudeDegrees: Double,
+        carrierPhaseRadians: Double,
+        meanLuminance: Double,
+        contrastAmplitudeScale: Double
+    ) {
+        self.evidenceSchemaVersion = evidenceSchemaVersion
+        self.rendererVersion = rendererVersion
+        self.pointDiameter = pointDiameter
+        self.rasterPixelDiameter = rasterPixelDiameter
+        self.displayScale = displayScale
+        self.carrierCyclesPerPatch = carrierCyclesPerPatch
+        self.gaussianSigmaFraction = gaussianSigmaFraction
+        self.orientationMagnitudeDegrees = orientationMagnitudeDegrees
+        self.carrierPhaseRadians = carrierPhaseRadians
+        self.meanLuminance = meanLuminance
+        self.contrastAmplitudeScale = contrastAmplitudeScale
+    }
+
+    /// Recomputes every derived value and pins the evidence to the renderer
+    /// revision used by this build. This detects missing, stale, or internally
+    /// inconsistent geometry before a result can receive a verified badge.
+    var isValidCurrentEvidence: Bool {
+        guard evidenceSchemaVersion == Self.currentEvidenceSchemaVersion,
+              rendererVersion == Self.currentRendererVersion,
+              pointDiameter.isFinite,
+              displayScale.isFinite,
+              carrierCyclesPerPatch.isFinite,
+              gaussianSigmaFraction.isFinite,
+              orientationMagnitudeDegrees.isFinite,
+              carrierPhaseRadians.isFinite,
+              meanLuminance.isFinite,
+              contrastAmplitudeScale.isFinite,
+              pointDiameter > 0,
+              (Self.minimumRasterPixelDiameter...Self.maximumRasterPixelDiameter)
+                .contains(rasterPixelDiameter),
+              (1...Self.maximumDisplayScale).contains(displayScale),
+              approximatelyEqual(
+                carrierCyclesPerPatch,
+                Self.currentCarrierCyclesPerPatch
+              ),
+              approximatelyEqual(
+                gaussianSigmaFraction,
+                Self.currentGaussianSigmaFraction
+              ),
+              approximatelyEqual(
+                orientationMagnitudeDegrees,
+                Self.currentOrientationMagnitudeDegrees
+              ),
+              approximatelyEqual(carrierPhaseRadians, Self.currentCarrierPhaseRadians),
+              approximatelyEqual(meanLuminance, Self.currentMeanLuminance),
+              approximatelyEqual(
+                contrastAmplitudeScale,
+                Self.currentContrastAmplitudeScale
+              ) else {
+            return false
+        }
+
+        let rawPixelDiameter = pointDiameter * displayScale
+        guard rawPixelDiameter.isFinite,
+              rawPixelDiameter >= Double(Self.minimumRasterPixelDiameter),
+              rawPixelDiameter <= Double(Self.maximumRasterPixelDiameter) else {
+            return false
+        }
+        let recomputedPixels = Int(rawPixelDiameter.rounded())
+        let recomputedPoints = Double(rasterPixelDiameter) / displayScale
+        return recomputedPixels == rasterPixelDiameter
+            && approximatelyEqual(pointDiameter, recomputedPoints)
+    }
+
+    private func approximatelyEqual(_ lhs: Double, _ rhs: Double) -> Bool {
+        abs(lhs - rhs) <= Self.floatingPointTolerance
+    }
+}
+
 struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let eye: Eye
@@ -123,6 +269,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
     let outcome: TrialOutcome
     let responseSource: ResponseSource
     let transcript: String?
+    let presentationGeometry: GaborPresentationGeometry?
     let quality: BlockQuality?
     let timestamp: Date
 
@@ -136,6 +283,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         outcome: TrialOutcome,
         responseSource: ResponseSource,
         transcript: String?,
+        presentationGeometry: GaborPresentationGeometry? = nil,
         quality: BlockQuality? = nil,
         timestamp: Date = Date()
     ) {
@@ -148,6 +296,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         self.outcome = outcome
         self.responseSource = responseSource
         self.transcript = transcript
+        self.presentationGeometry = presentationGeometry
         self.quality = quality
         self.timestamp = timestamp
     }
@@ -164,6 +313,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
         outcome: TrialOutcome,
         responseSource: ResponseSource,
         transcript: String?,
+        presentationGeometry: GaborPresentationGeometry? = nil,
         quality: BlockQuality? = nil,
         timestamp: Date = Date()
     ) {
@@ -177,6 +327,7 @@ struct GaborTrial: Codable, Equatable, Identifiable, Sendable {
             outcome: outcome,
             responseSource: responseSource,
             transcript: transcript,
+            presentationGeometry: presentationGeometry,
             quality: quality,
             timestamp: timestamp
         )
@@ -313,8 +464,58 @@ struct DisplayRasterValidation: Codable, Equatable, Sendable {
     let nativePixelHeight: Int
     let displayScale: Double
     let pixelsPerInch: Double
+    let validatedBrightnessFraction: Double?
+    let blackLuminanceCandelaPerSquareMetre: Double?
+    let whiteLuminanceCandelaPerSquareMetre: Double?
+    let gammaCharacterizationIdentifier: String?
     let validatedAt: Date?
     let notes: String
+
+    init(
+        sampleCount: Int,
+        nativePixelWidth: Int,
+        nativePixelHeight: Int,
+        displayScale: Double,
+        pixelsPerInch: Double,
+        validatedBrightnessFraction: Double? = nil,
+        blackLuminanceCandelaPerSquareMetre: Double? = nil,
+        whiteLuminanceCandelaPerSquareMetre: Double? = nil,
+        gammaCharacterizationIdentifier: String? = nil,
+        validatedAt: Date?,
+        notes: String
+    ) {
+        self.sampleCount = sampleCount
+        self.nativePixelWidth = nativePixelWidth
+        self.nativePixelHeight = nativePixelHeight
+        self.displayScale = displayScale
+        self.pixelsPerInch = pixelsPerInch
+        self.validatedBrightnessFraction = validatedBrightnessFraction
+        self.blackLuminanceCandelaPerSquareMetre = blackLuminanceCandelaPerSquareMetre
+        self.whiteLuminanceCandelaPerSquareMetre = whiteLuminanceCandelaPerSquareMetre
+        self.gammaCharacterizationIdentifier = gammaCharacterizationIdentifier
+        self.validatedAt = validatedAt
+        self.notes = notes
+    }
+}
+
+enum ClinicalReferenceStandard: String, Codable, Equatable, Sendable {
+    case manifestRefraction
+    case cycloplegicRefraction
+}
+
+/// Structured agreement outcomes from an externally reviewed study. Numeric
+/// thresholds are not self-approving; the matching protocol release must also
+/// be present in the source-controlled allow-list.
+struct ClinicalAgreementMetrics: Codable, Equatable, Sendable {
+    let referenceStandard: ClinicalReferenceStandard
+    let studyIdentifier: String
+    let predefinedAcceptanceCriteriaIdentifier: String
+    let meanAbsoluteErrorDiopter: Double
+    let meanBiasDiopter: Double
+    let lower95AgreementLimitDiopter: Double
+    let upper95AgreementLimitDiopter: Double
+    let sensitivity: Double
+    let specificity: Double
 }
 
 /// Independent participant-level evidence for the complete measurement
@@ -323,8 +524,42 @@ struct ClinicalValidationEvidence: Codable, Equatable, Sendable {
     let participantCount: Int
     let observationCount: Int
     let protocolIdentifier: String
+    /// Optional for backward decoding. A missing value is never accepted for
+    /// numeric output.
+    let protocolVersion: Int?
+    let presentationMode: OptotypePresentationMode?
+    let responsesPerLevel: Int?
+    let usedValidatedThresholdModel: Bool?
+    let permittedPointSizeClamping: Bool?
+    let agreementMetrics: ClinicalAgreementMetrics?
     let validatedAt: Date?
     let notes: String
+
+    init(
+        participantCount: Int,
+        observationCount: Int,
+        protocolIdentifier: String,
+        protocolVersion: Int? = nil,
+        presentationMode: OptotypePresentationMode? = nil,
+        responsesPerLevel: Int? = nil,
+        usedValidatedThresholdModel: Bool? = nil,
+        permittedPointSizeClamping: Bool? = nil,
+        agreementMetrics: ClinicalAgreementMetrics? = nil,
+        validatedAt: Date?,
+        notes: String
+    ) {
+        self.participantCount = participantCount
+        self.observationCount = observationCount
+        self.protocolIdentifier = protocolIdentifier
+        self.protocolVersion = protocolVersion
+        self.presentationMode = presentationMode
+        self.responsesPerLevel = responsesPerLevel
+        self.usedValidatedThresholdModel = usedValidatedThresholdModel
+        self.permittedPointSizeClamping = permittedPointSizeClamping
+        self.agreementMetrics = agreementMetrics
+        self.validatedAt = validatedAt
+        self.notes = notes
+    }
 }
 
 struct DeviceProfile: Codable, Equatable, Identifiable, Sendable {

@@ -68,12 +68,12 @@ describe("endpoint abuse controls", () => {
   });
 
   it("applies endpoint-specific request ceilings", async () => {
-    const ip = `adapt-${Date.now()}`;
-    for (let index = 0; index < 6; index += 1) {
-      expect(await enforceRateLimit(request(ip, 200), response().value, "adapt")).toBe(true);
+    const ip = `explain-${Date.now()}`;
+    for (let index = 0; index < 8; index += 1) {
+      expect(await enforceRateLimit(request(ip, 200), response().value, "explain")).toBe(true);
     }
     const blocked = response();
-    expect(await enforceRateLimit(request(ip, 200), blocked.value, "adapt")).toBe(false);
+    expect(await enforceRateLimit(request(ip, 200), blocked.value, "explain")).toBe(false);
     expect(blocked.result.statusCode).toBe(429);
   });
 

@@ -31,20 +31,32 @@ struct SeeNAApp: App {
     private func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
-            if session.requiresLiveSensors { dependencies.sensorCoordinator.start() }
-            if session.requiresScreeningBrightness { dependencies.brightness.applyScreeningBrightness() }
-        case .inactive:
-            dependencies.audioRecorder.stop()
-            dependencies.spokenPrompts.stop()
-            dependencies.sensorCoordinator.suspend()
-            dependencies.brightness.restore()
-        case .background:
-            dependencies.audioRecorder.stop()
-            dependencies.spokenPrompts.stop()
-            dependencies.sensorCoordinator.suspend()
-            dependencies.brightness.restore()
+            guard let resumePlan = session.consumeSceneResumePlan() else { return }
+            if resumePlan.resumesLiveSensors {
+                dependencies.sensorCoordinator.start()
+            }
+            if resumePlan.restoresScreeningBrightness {
+                dependencies.brightness.applyScreeningBrightness()
+            }
+        case .inactive, .background:
+            guard session.beginSceneSuspension() else { return }
+            suspendLiveResources()
         @unknown default:
-            dependencies.brightness.restore()
+            guard session.beginSceneSuspension() else { return }
+            suspendLiveResources()
         }
+    }
+
+    @MainActor
+    private func suspendLiveResources() {
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
+        dependencies.sensorCoordinator.suspend()
+        // Sensor invalidation is delivered synchronously to the active
+        // screen. Some screens reset their state by asking for guidance,
+        // so stop the audio channel again after that callback has run.
+        dependencies.audioRecorder.stop()
+        dependencies.spokenPrompts.stop()
+        dependencies.brightness.restore()
     }
 }

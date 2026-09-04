@@ -43,7 +43,10 @@ enum ResultsPresentationPolicy {
         integrityValid: Bool?,
         numericResultsAllowed: Bool?
     ) -> String {
-        if integrityValid == false { return "Repeat needed · review required" }
+        if numericResultsAllowed == true, integrityValid != true {
+            return "Repeat needed · review required"
+        }
+        if integrityValid == false { return "Repeat needed" }
         guard let result = presentableEyeResult(
             result,
             numericResultsAllowed: numericResultsAllowed
@@ -57,13 +60,14 @@ enum ResultsPresentationPolicy {
             return "Estimate available"
         case .noMyopiaDetectedWithinRange: return "Completed the farthest target in this task"
         case .strongerThanSupportedRange: return "Professional review recommended"
-        case .experimentalThresholdObserved: return "Performance boundary recorded"
-        case .experimentalFarthestTargetPassed: return "Completed the farthest target"
-        case .experimentalAdverseBoundary: return "Professional review recommended"
-        case .experimentalTaskCompleted: return "Task completed"
+        case .experimentalThresholdObserved,
+             .experimentalFarthestTargetPassed,
+             .experimentalAdverseBoundary,
+             .experimentalTaskCompleted:
+            return "Task complete"
         case .unreliableMeasurement: return "Repeat needed"
-        case .deviceUnsupported: return "Device unsupported"
-        case .userIneligible: return "Not suitable"
+        case .deviceUnsupported: return "Unavailable on this iPhone"
+        case .userIneligible: return "Not suitable for this task"
         }
     }
 
@@ -74,8 +78,11 @@ enum ResultsPresentationPolicy {
         numericResultsAllowed: Bool?
     ) -> String {
         let eyeName = eye.displayName
+        if numericResultsAllowed == true, integrityValid != true {
+            return "\(eyeName) eye circle task needs repeating."
+        }
         guard integrityValid != false else {
-            return "\(eyeName) eye result needs repeating because its internal consistency checks need review."
+            return "\(eyeName) eye circle task needs repeating."
         }
         let result = presentableEyeResult(result, numericResultsAllowed: numericResultsAllowed)
         if let result, result.status == .validEstimate,
@@ -88,18 +95,12 @@ enum ResultsPresentationPolicy {
             )
         } else if result?.status == .noMyopiaDetectedWithinRange {
             return "\(eyeName) eye completed the farthest target in this task. This cannot rule out myopia."
-        } else if result?.status == .experimentalTaskCompleted {
-            return "\(eyeName) eye completed the target task. This screening does not provide a prescription or rule out myopia."
-        } else if result?.status == .experimentalThresholdObserved {
-            return "\(eyeName) eye reached a performance boundary in the target task. This does not rule out myopia."
-        } else if result?.status == .experimentalFarthestTargetPassed {
-            return "\(eyeName) eye completed the farthest target. This does not rule out myopia or other eye conditions."
-        } else if result?.status == .experimentalAdverseBoundary {
-            return "\(eyeName) eye reached the strongest target difficulty. Arrange a professional eye examination."
+        } else if let status = result?.status, status.isQualitativeTaskCompletion {
+            return "\(eyeName) eye circle task complete."
         } else if result?.status == .strongerThanSupportedRange {
             return "\(eyeName) eye needs professional review."
         }
-        return "\(eyeName) eye Landolt test needs repeating."
+        return "\(eyeName) eye circle task needs repeating."
     }
 
     static func evaluate(
@@ -125,17 +126,19 @@ enum ResultsPresentationPolicy {
             reliability = .reliable
         }
 
+        let numericApplicable = screening.numericResultsAllowed == true &&
+            NumericResultEligibility.hasApprovedNumericProtocolRelease &&
+            landolt.allSatisfy { statusIsNumeric($0.status) }
+
         let recommendation: ScreeningAction
         if reliability == .reviewRequired || reliability == .repeatRequired {
             recommendation = .repeatRequired
-        } else if landolt.contains(where: recommendsProfessionalReview) {
+        } else if numericApplicable && landolt.contains(where: recommendsProfessionalReview) {
             recommendation = .professionalReviewRecommended
         } else {
             recommendation = .routineExamRecommended
         }
 
-        let numericApplicable = screening.numericResultsAllowed == true &&
-            landolt.allSatisfy { statusIsNumeric($0.status) }
         let numericVerification: NumericVerificationDisposition
         if !evidenceIntact {
             numericVerification = .reviewNeeded
@@ -151,7 +154,11 @@ enum ResultsPresentationPolicy {
             recommendation: recommendation,
             numericVerification: numericVerification,
             headline: headline(structurallyFinished: structurallyFinished, reliability: reliability),
-            localMeaning: localMeaning(landolt: landolt, reliability: reliability),
+            localMeaning: localMeaning(
+                landolt: landolt,
+                reliability: reliability,
+                numericApplicable: numericApplicable
+            ),
             canOpenAnswerAudit: structurallyFinished
         )
     }
@@ -162,13 +169,69 @@ enum ResultsPresentationPolicy {
         local: String,
         remote: String?,
         remoteVerified: Bool,
+        remoteWasGenerated: Bool,
         reliability: ResultsReliability
     ) -> String {
         guard reliability == .reliable,
+              remoteWasGenerated,
               remoteVerified,
               let remote = remote?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !remote.isEmpty else { return local }
+              qualitativeExplanationIsSafe(remote) else { return local }
         return remote
+    }
+
+    /// A second, deterministic boundary on the phone. The backend verdict is
+    /// necessary but never sufficient: model prose can describe only neutral
+    /// task completion and answer recording, with no measurements or health
+    /// interpretation.
+    static func qualitativeExplanationIsSafe(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 220 else { return false }
+        guard !trimmed.contains(where: { $0.wholeNumberValue != nil }) else { return false }
+
+        let bannedPatterns = [
+            #"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen|scores?|half|quarter|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\b"#,
+            #"\b(?:d|diopt(?:er|re)s?|met(?:er|re)s?|m|centimet(?:er|re)s?|cm|millimet(?:er|re)s?|mm|kilomet(?:er|re)s?|km|feet|foot|ft|inches?|degrees?|arcmin(?:ute)?s?|pixels?|px|percent(?:age)?)\b"#,
+            #"(?:%|°)"#,
+            #"\b(?:poc|prototypes?|demos?|simulat\w*|validat\w*|calibrat\w*|ai|models?|providers?|algorithms?|schemas?|internal)\b"#,
+            #"\b(?:diagnos\w*|prescri\w*|myopi\w*|refract\w*|acuity|contrast\w*|referr\w*|diseases?|treat\w*|cures?|curing|healthy|normal|abnormal|risks?|concerns?|conditions?|vision|eyesight|sight|power|clinical|medical)\b"#,
+            #"\b(?:pass(?:ed|es|ing)?|fail(?:ed|s|ing)?|better|worse|similar|different|difference|accur\w*|reliab\w*|consisten\w*|verif\w*|quality|good|poor|estimate\w*|detect\w*|suggest\w*|indicat\w*|imply\w*|mean(?:s|ing)?|likely|perhaps|possibly)\b"#,
+            #"\b(?:not|no|never|repeat\w*|incomplete|missing|unavailable|unable|cannot|couldn['’]?t|didn['’]?t)\b"#,
+            #"\b(?:doctor|optometrist|ophthalmologist|professional|appointment|examination|exam|review|screening?|results?)\b"#
+        ]
+        guard bannedPatterns.allSatisfy({ pattern in
+            trimmed.range(of: pattern, options: [.regularExpression, .caseInsensitive]) == nil
+        }) else { return false }
+
+        // Keep the accepted prose surface deliberately small. A deny-list
+        // catches known unsafe claims; this allow-list also prevents a novel
+        // euphemism from adding meaning beyond task completion and recording.
+        guard trimmed.range(
+            of: #"[^A-Za-z\s,.]"#,
+            options: .regularExpression
+        ) == nil else { return false }
+        let allowedWords: Set<String> = [
+            "all", "and", "answer", "answers", "are", "been", "both",
+            "complete", "completed", "each", "eye", "eyes", "finished",
+            "for", "from", "have", "is", "recorded", "response", "responses",
+            "saved", "task", "tasks", "the", "these", "was", "we", "were",
+            "you", "your"
+        ]
+        let words = trimmed
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter })
+            .map(String.init)
+        guard !words.isEmpty, words.allSatisfy(allowedWords.contains) else { return false }
+
+        let hasTaskFact = trimmed.range(
+            of: #"\b(?:answers?|responses?|tasks?)\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        let hasNeutralOutcome = trimmed.range(
+            of: #"\b(?:recorded|saved|complete|completed|finished)\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        return hasTaskFact && hasNeutralOutcome
     }
 
     private static func needsRepeat(_ result: EyeScreeningResult) -> Bool {
@@ -204,20 +267,23 @@ enum ResultsPresentationPolicy {
         structurallyFinished: Bool,
         reliability: ResultsReliability
     ) -> String {
-        guard structurallyFinished else { return "Screening incomplete" }
+        guard structurallyFinished else { return "Tasks incomplete" }
         switch reliability {
-        case .reliable: return "Screening complete"
-        case .repeatRequired: return "Screening complete, but repeat needed"
-        case .reviewRequired: return "Screening complete, but review needed"
+        case .reliable: return "Tasks complete"
+        case .repeatRequired, .reviewRequired: return "Repeat needed"
         }
     }
 
     private static func localMeaning(
         landolt: [EyeScreeningResult],
-        reliability: ResultsReliability
+        reliability: ResultsReliability,
+        numericApplicable: Bool
     ) -> String {
         guard reliability == .reliable else {
-            return "One or more tasks need attention. Repeat the affected task before relying on this screening."
+            return "One or more tasks need repeating."
+        }
+        guard numericApplicable else {
+            return "Your answers were recorded for both eyes."
         }
         if landolt.contains(where: {
             $0.status == .strongerThanSupportedRange || $0.status == .experimentalAdverseBoundary
@@ -245,6 +311,16 @@ enum ResultsPresentationPolicy {
 }
 
 private extension ScreeningStatus {
+    var isQualitativeTaskCompletion: Bool {
+        switch self {
+        case .experimentalThresholdObserved, .experimentalFarthestTargetPassed,
+             .experimentalAdverseBoundary, .experimentalTaskCompleted:
+            return true
+        default:
+            return false
+        }
+    }
+
     var isNumericStatus: Bool {
         switch self {
         case .validEstimate, .noMyopiaDetectedWithinRange, .strongerThanSupportedRange:

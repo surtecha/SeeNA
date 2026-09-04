@@ -1,5 +1,6 @@
 import Observation
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
@@ -148,24 +149,37 @@ final class ProcessingViewModel {
     }
 
     static func fallbackExplanation(for request: ExplanationRequest) -> ExplanationResponse {
-        let comparison: String = switch request.comparisonCode {
-        case .eyesBroadlySimilar: "The two eyes showed broadly similar task performance."
-        case .eyesNoticeablyDifferent: "The two eyes showed noticeably different task performance."
-        case .reviewEyesSeparately: "Review each eye separately because this task cannot support a numeric comparison."
-        case .repeatNeeded: "One or both eyes need the visual task repeated."
+        let statuses = [request.rightEye?.status, request.leftEye?.status].compactMap { $0 }
+        let isNonnumeric = statuses.contains { status in
+            switch status {
+            case .experimentalThresholdObserved, .experimentalFarthestTargetPassed,
+                 .experimentalAdverseBoundary, .experimentalTaskCompleted:
+                return true
+            default:
+                return false
+            }
         }
+        let comparison: String = switch request.comparisonCode {
+        case .eyesBroadlySimilar: "The two eye results were broadly similar."
+        case .eyesNoticeablyDifferent: "The two eye results were noticeably different."
+        case .reviewEyesSeparately: "Your answers were recorded for both eyes."
+        case .repeatNeeded: "One or more tasks need repeating."
+        }
+        let needsRepeat = request.actionCode == .noReliableResult
         return ExplanationResponse(
-            headline: request.actionCode == .noReliableResult
-                ? "Screening finished, but needs repeating."
-                : "Orientation task complete.",
-            plainMeaning: comparison,
+            headline: needsRepeat ? "Repeat needed" : "Tasks complete",
+            plainMeaning: isNonnumeric && !needsRepeat
+                ? "Your answers were recorded for both eyes."
+                : comparison,
             limitations: [
-                "This screening is not a glasses prescription.",
-                "It does not assess hyperopia, astigmatism, or eye disease."
+                "This task is not a glasses prescription.",
+                "It cannot diagnose eye conditions."
             ],
-            nextSteps: ["Arrange a complete eye examination when accessible."],
-            disclaimer: "Vision screening — not a diagnosis or prescription.",
-            verification: request.localIntegrityCode == .consistent ? .consistent : .reviewRequired,
+            nextSteps: ["Continue routine eye checks with an eye care professional."],
+            disclaimer: "This task is not a diagnosis or glasses prescription.",
+            verification: request.localIntegrityCode != .consistent
+                ? .reviewRequired
+                : isNonnumeric ? .notApplicable : .consistent,
             usedFallback: true
         )
     }
@@ -188,7 +202,7 @@ struct ProcessingView: View {
             } else {
                 ProgressView().controlSize(.large)
             }
-            Text(model.phase == .saveFailed ? "Session not saved" : "Preparing your results")
+            Text(model.phase == .saveFailed ? "Session not saved" : "Preparing your summary")
                 .font(.title2.bold())
             Text(model.phase == .saveFailed
                  ? "You can retry, or continue with a volatile result that will disappear when you leave it."
@@ -255,20 +269,12 @@ final class ResultsViewModel {
         )
     }
 
-    var verificationState: ResultVerificationState {
-        if cachedExplanation?.verification == .reviewRequired { return .reviewNeeded }
-        switch presentation.numericVerification {
-        case .reviewNeeded: return .reviewNeeded
-        case .calculationConsistent: return .numericConsistent
-        case .notApplicableEvidenceIntact: return .numericNotApplicable
-        }
-    }
-
     var displayedExplanation: String {
         ResultsPresentationPolicy.explanation(
             local: presentation.localMeaning,
             remote: cachedExplanation?.plainMeaning,
             remoteVerified: cachedExplanation?.verification == .consistent,
+            remoteWasGenerated: cachedExplanation?.usedFallback == false,
             reliability: presentation.reliability
         )
     }
@@ -277,19 +283,16 @@ final class ResultsViewModel {
 }
 
 struct ResultsView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @State private var model: ResultsViewModel
     @State private var hasSpoken = false
+    @State private var activeSpeechID: UUID?
     @State private var showingAnswers = false
 
     init(model: ResultsViewModel) {
         _model = State(initialValue: model)
-    }
-
-    private var eyeResults: [EyeScreeningResult] {
-        [model.screening.rightEyeResult, model.screening.leftEyeResult]
-            .compactMap { $0 }
     }
 
     private var displayedExplanation: String {
@@ -297,15 +300,11 @@ struct ResultsView: View {
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
+        ScrollView(showsIndicators: dynamicTypeSize.isAccessibilitySize) {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Your results")
+                Text(model.presentation.headline)
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .accessibilityAddTraits(.isHeader)
-
-                Text("Screening summary")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(SEENATheme.secondaryInk)
 
                 if session.persistenceState == .volatile {
                     Label("Not saved — this result is available only on this screen", systemImage: "externaldrive.badge.exclamationmark")
@@ -313,13 +312,6 @@ struct ResultsView: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(SEENATheme.card, in: RoundedRectangle(cornerRadius: 14))
-                }
-
-                if !eyeResults.isEmpty {
-                    ResultVerificationBadge(
-                        state: model.verificationState,
-                        issueCount: model.integrity.issueCount
-                    )
                 }
 
                 ResultPair(
@@ -350,6 +342,9 @@ struct ResultsView: View {
 
                 Label(nextStepText, systemImage: "arrow.right.circle.fill")
                     .font(.body.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                voiceControls
 
                 if model.presentation.canOpenAnswerAudit {
                     Button("See answers", action: showAnswers)
@@ -362,7 +357,7 @@ struct ResultsView: View {
                 }
                     .buttonStyle(PrimaryActionStyle())
 
-                Text("Vision screening · not a prescription or diagnosis.")
+                Text("This task is not a diagnosis or glasses prescription.")
                     .font(.caption)
                     .foregroundStyle(SEENATheme.secondaryInk)
                     .multilineTextAlignment(.center)
@@ -389,12 +384,75 @@ struct ResultsView: View {
             guard !hasSpoken else { return }
             hasSpoken = true
             dependencies.brightness.restore()
-            _ = await dependencies.spokenPrompts.speakLocallyForTransition(spokenSummary)
+            if UIAccessibility.isVoiceOverRunning {
+                UIAccessibility.post(notification: .screenChanged, argument: conciseSpokenSummary)
+            } else {
+                await speakAndTrack(conciseSpokenSummary)
+            }
         }
-        .onDisappear { dependencies.spokenPrompts.stop() }
+        .onDisappear {
+            activeSpeechID = nil
+            dependencies.spokenPrompts.stop()
+        }
     }
 
-    private var spokenSummary: String {
+    private var voiceControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Listen", systemImage: "speaker.wave.2.fill")
+                    .font(.headline)
+                Spacer()
+                if activeSpeechID != nil {
+                    Text("Speaking")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SEENATheme.secondaryInk)
+                        .accessibilityHidden(true)
+                }
+            }
+
+            Button(action: speakFullResult) {
+                Label("Hear full result", systemImage: "text.bubble.fill")
+            }
+            .buttonStyle(SecondaryActionStyle())
+            .accessibilityHint("Reads both eye results, their meaning, and the next step")
+
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 12) { secondaryVoiceControls }
+                } else {
+                    HStack(spacing: 12) { secondaryVoiceControls }
+                }
+            }
+        }
+        .padding(16)
+        .background(SEENATheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(SEENATheme.line, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var secondaryVoiceControls: some View {
+        Button(action: repeatConciseResult) {
+            Label("Repeat", systemImage: "repeat")
+        }
+        .buttonStyle(SecondaryActionStyle())
+        .accessibilityHint("Repeats the short result summary")
+
+        Button(action: stopVoice) {
+            Label("Stop voice", systemImage: "stop.fill")
+        }
+        .buttonStyle(SecondaryActionStyle())
+        .accessibilityHint("Stops SeeNA from speaking")
+    }
+
+    private var conciseSpokenSummary: String {
+        "\(model.spokenOpening) \(nextStepText)"
+    }
+
+    private var fullSpokenSummary: String {
         let right = ResultPair.spokenSummary(
             eye: .right,
             landolt: model.screening.rightEyeResult,
@@ -417,7 +475,44 @@ struct ResultsView: View {
         // Model prose is appended only after the separate consistency pass;
         // otherwise this is the deterministic local comparison above.
         let opening = model.spokenOpening
-        return "\(opening) \(right) \(left)\(explanationText) This is not a prescription. Please arrange a complete eye examination when accessible."
+        return "\(opening). \(right) \(left)\(explanationText) This does not diagnose eye conditions or provide a glasses prescription. \(nextStepText)"
+    }
+
+    private func speakFullResult() {
+        startSpeech(fullSpokenSummary, allowsLongForm: true)
+    }
+
+    private func repeatConciseResult() {
+        startSpeech(conciseSpokenSummary, allowsLongForm: false)
+    }
+
+    private func startSpeech(_ text: String, allowsLongForm: Bool) {
+        let speechID = UUID()
+        activeSpeechID = speechID
+        Task { @MainActor in
+            if allowsLongForm {
+                _ = await dependencies.spokenPrompts.speakLocallyAndWait(text)
+            } else {
+                _ = await dependencies.spokenPrompts.speakLocallyForTransition(text)
+            }
+            guard activeSpeechID == speechID else { return }
+            activeSpeechID = nil
+        }
+    }
+
+    private func speakAndTrack(_ text: String) async {
+        let speechID = UUID()
+        activeSpeechID = speechID
+        _ = await dependencies.spokenPrompts.speakLocallyForTransition(text)
+        guard activeSpeechID == speechID else { return }
+        activeSpeechID = nil
+    }
+
+    private func stopVoice() {
+        activeSpeechID = nil
+        dependencies.spokenPrompts.stop()
+        HapticFeedback.impact(.light)
+        UIAccessibility.post(notification: .announcement, argument: "Voice stopped")
     }
 
     private func showAnswers() {
@@ -430,9 +525,9 @@ struct ResultsView: View {
         case .professionalReviewRecommended:
             return "Arrange a professional eye examination."
         case .repeatRequired:
-            return "Repeat the affected task before relying on this screening."
+            return "Repeat the affected task."
         case .routineExamRecommended, .unavailable:
-            return "Arrange a complete eye examination when accessible."
+            return "Continue routine eye checks with an eye care professional."
         }
     }
 }
@@ -500,6 +595,21 @@ struct SessionHistoryView: View {
                     .foregroundStyle(SEENATheme.secondaryInk)
             }
 
+            if let errorMessage = model.errorMessage {
+                Section("Needs attention") {
+                    Label {
+                        Text(errorMessage)
+                            .font(.body.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(SEENATheme.danger)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("History error. \(errorMessage)")
+                }
+            }
+
             Section("Previous sessions") {
                 if model.sessions.isEmpty {
                     Text("No saved sessions")
@@ -547,9 +657,14 @@ struct SessionHistoryView: View {
                     }
                 }
             }
+
         }
         .navigationTitle("Previous sessions")
         .task { await model.load() }
+        .onChange(of: model.errorMessage) { _, errorMessage in
+            guard let errorMessage else { return }
+            UIAccessibility.post(notification: .announcement, argument: "History error. \(errorMessage)")
+        }
         .alert("Delete this session?", isPresented: Binding(
             get: { pendingDeleteID != nil },
             set: { if !$0 { pendingDeleteID = nil } }
@@ -561,7 +676,7 @@ struct SessionHistoryView: View {
                 Task { await model.delete(id: id) }
             }
         } message: {
-            Text("This removes the saved measurements and answer audit from this iPhone.")
+            Text("This removes the saved result and answers from this iPhone.")
         }
         .confirmationDialog(
             "Delete every saved session?",
@@ -572,15 +687,6 @@ struct SessionHistoryView: View {
                 Task { await model.deleteAll() }
             }
             Button("Cancel", role: .cancel) {}
-        }
-        .overlay(alignment: .bottom) {
-            if let errorMessage = model.errorMessage {
-                Text(errorMessage)
-                    .font(.body.weight(.semibold))
-                    .padding()
-                    .background(.regularMaterial, in: Capsule())
-                    .padding()
-            }
         }
     }
 
@@ -608,29 +714,20 @@ private struct SavedSessionDetailView: View {
         )
     }
 
-    private var verificationState: ResultVerificationState {
-        switch presentation.numericVerification {
-        case .reviewNeeded: return .reviewNeeded
-        case .calculationConsistent: return .numericConsistent
-        case .notApplicableEvidenceIntact: return .numericNotApplicable
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(screening.createdAt.formatted(date: .long, time: .shortened))
                     .font(.title2.bold())
-                Text("Read-only saved result and evidence")
+                Text("Saved result")
                     .font(.body)
                     .foregroundStyle(SEENATheme.secondaryInk)
-                ResultVerificationBadge(state: verificationState, issueCount: integrity.issueCount)
                 ResultPair(eye: .right, landolt: screening.rightEyeResult, gabor: screening.rightGaborResult, integrity: integrity.right, gaborIntegrity: integrity.rightGabor, numericResultsAllowed: screening.numericResultsAllowed)
                 ResultPair(eye: .left, landolt: screening.leftEyeResult, gabor: screening.leftGaborResult, integrity: integrity.left, gaborIntegrity: integrity.leftGabor, numericResultsAllowed: screening.numericResultsAllowed)
                 Text(presentation.localMeaning).font(.body)
-                Label("\(screening.rightEyeTrials.count + screening.leftEyeTrials.count) Landolt blocks saved", systemImage: "doc.text.magnifyingglass")
-                Label("\((screening.rightGaborTrials ?? []).count + (screening.leftGaborTrials ?? []).count) Gabor blocks saved", systemImage: "waveform.path.ecg")
-                Button("Open answer and evidence audit") { showingAnswers = true }
+                Label("\(screening.rightEyeTrials.count + screening.leftEyeTrials.count) circle answers saved", systemImage: "doc.text.magnifyingglass")
+                Label("\((screening.rightGaborTrials ?? []).count + (screening.leftGaborTrials ?? []).count) pattern answers saved", systemImage: "checklist")
+                Button("See answers") { showingAnswers = true }
                     .buttonStyle(SecondaryActionStyle())
             }
             .padding(20)

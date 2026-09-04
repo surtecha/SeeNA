@@ -1,15 +1,14 @@
 import OpenAI from "openai";
-import { assertExplanationDraftHasNoMeasurements } from "./explanation-safety.js";
 import {
-  adaptedContentJSONSchema,
-  adaptedContentResponseSchema,
+  assertExplanationDraftHasNoMeasurements,
+  qualitativeCandidateMatchesFacts
+} from "./explanation-safety.js";
+import {
   explanationDraftJSONSchema,
   explanationDraftResponseSchema,
   explanationResponseSchema,
   explanationVerificationJSONSchema,
   resultVerificationResponseSchema,
-  type AdaptContentRequest,
-  type AdaptedContentResponse,
   type ExplanationDraftResponse,
   type ExplanationRequest,
   type ExplanationResponse,
@@ -32,16 +31,29 @@ recommend treatment, or override the supplied action code. If a status is unreli
 say clearly that the task needs repeating. Do not quote, restate, round, or introduce
 any numeric value; the application presents its deterministic numbers separately. Return only the
 requested JSON schema. Use clear, professional, human language. Do not mention prototypes,
-experiments, validation, calibration, AI, models, providers, or internal codes.`;
+experiments, validation, calibration, AI, models, providers, or internal codes. When both supplied
+statuses start with experimental and localIntegrityCode is consistent, use the headline "Tasks complete"
+and use exactly "All tasks are complete, and your responses were recorded for each eye." for plainMeaning.
+Do not interpret a target level or score, compare the eyes, or infer anything about vision or health.
+For that qualitative case, populate every field and use these exact safety fields: limitations must be
+["This task is not a glasses prescription.", "It cannot diagnose eye conditions."], nextSteps must be
+["Continue routine eye checks with an eye care professional."], and disclaimer must be
+"This task is not a diagnosis or glasses prescription." Never leave a required string or array empty.`;
 
-const resultConsistencyInstruction = `You are a non-clinical consistency checker for a research prototype.
+const resultConsistencyInstruction = `You are a non-clinical consistency checker for a vision-screening workflow.
 You cannot clinically validate the screening, diagnose, prescribe, assess eyesight, or claim accuracy.
 You must not alter, calculate, invent, round, repeat, or introduce any numeric values.
 Compare only the supplied allow-listed qualitative codes and the candidate explanation.
 Return reviewRequired when localIntegrityCode is review_required or when the candidate contradicts a supplied code.
-Return consistent only for numeric-capable statuses when the candidate is compatible with a consistent localIntegrityCode.
-Return notApplicable when any status starts with experimental and localIntegrityCode is consistent; this means numeric
-verification is not applicable, not that clinical validation succeeded.
+For experimental statuses, evaluate consistency instead of returning notApplicable automatically. Return consistent only
+when localIntegrityCode is consistent, both eye tasks are present, the action code is routine_exam_recommended, and the
+candidate says only that the tasks finished and answers or responses were recorded. It must not interpret scores, compare
+the eyes, infer vision or health, recommend referral, or introduce any medical meaning. Return reviewRequired for any
+contradiction, unsupported interpretation, missing eye task, non-routine action, or review_required local integrity.
+The required negated diagnosis and prescription limitations are safety boundaries, not health inferences. The universal
+routine eye-check next step is not a score-triggered referral. Do not mark either of those required fields for review.
+Return notApplicable only when there is no candidate task meaning that can be checked. A consistent verdict confirms only
+that prose matches the supplied task codes. It never means clinical validation, diagnostic review, or measurement accuracy.
 Return only the requested JSON schema.`;
 
 export async function generateExplanation(input: ExplanationRequest): Promise<ExplanationResponse> {
@@ -50,6 +62,7 @@ export async function generateExplanation(input: ExplanationRequest): Promise<Ex
     store: false,
     tools: [],
     max_output_tokens: 700,
+    reasoning: { effort: "none" },
     instructions: resultSafetyInstruction,
     input: JSON.stringify(input),
     text: {
@@ -61,10 +74,26 @@ export async function generateExplanation(input: ExplanationRequest): Promise<Ex
       }
     }
   });
-  const draft = explanationDraftResponseSchema.parse(JSON.parse(response.output_text));
-  assertExplanationDraftHasNoMeasurements(draft);
-  const verification = await verifyExplanationConsistency(input, draft);
-  return explanationResponseSchema.parse({ ...draft, verification, usedFallback: false });
+  const modelDraft = explanationDraftResponseSchema.parse(JSON.parse(response.output_text));
+  assertExplanationDraftHasNoMeasurements(modelDraft);
+  const statuses = [input.rightEye?.status, input.leftEye?.status].filter(Boolean);
+  const isQualitative = statuses.some(status => status?.startsWith("experimental"));
+  const candidate: ExplanationDraftResponse = isQualitative ? {
+    headline: "Tasks complete",
+    plainMeaning: modelDraft.plainMeaning,
+    limitations: [
+      "This task is not a glasses prescription.",
+      "It cannot diagnose eye conditions."
+    ],
+    nextSteps: ["Continue routine eye checks with an eye care professional."],
+    disclaimer: "This task is not a diagnosis or glasses prescription.",
+    usedFallback: false
+  } : { ...modelDraft, usedFallback: false };
+  if (!qualitativeCandidateMatchesFacts(input, candidate)) {
+    throw new Error("model_explanation_contradicts_qualitative_facts");
+  }
+  const verification = await verifyExplanationConsistency(input, candidate);
+  return explanationResponseSchema.parse({ ...candidate, verification });
 }
 
 /**
@@ -80,7 +109,8 @@ async function verifyExplanationConsistency(
     model: "gpt-5.6-luna",
     store: false,
     tools: [],
-    max_output_tokens: 80,
+    max_output_tokens: 200,
+    reasoning: { effort: "none" },
     instructions: resultConsistencyInstruction,
     input: JSON.stringify({ deterministicFacts: input, candidateExplanation: candidate }),
     text: {
@@ -93,34 +123,4 @@ async function verifyExplanationConsistency(
     }
   });
   return resultVerificationResponseSchema.parse(JSON.parse(response.output_text)).verification;
-}
-
-const adaptationInstruction = `Restructure only the supplied allow-listed public-service fixture for readability.
-Do not add eligibility promises, legal claims, medical advice, new dates, new requirements, or personalised facts.
-Preserve the deadline and required-document meaning. Return only the requested JSON schema.`;
-
-export async function generateAdaptedContent(input: AdaptContentRequest): Promise<AdaptedContentResponse> {
-  const source = {
-    contentID: "medical-travel-support-v1",
-    original: "Applicants seeking consideration under the regional transportation reimbursement framework are required to provide documentation substantiating their residence and appointment. Required evidence is photo identification, proof of address, and appointment confirmation. Submit before 14 September.",
-    preferences: input
-  };
-  const response = await openAIClient().responses.create({
-    model: process.env.OPENAI_TEXT_MODEL ?? "gpt-5.6-luna",
-    store: false,
-    tools: [],
-    max_output_tokens: 700,
-    instructions: adaptationInstruction,
-    input: JSON.stringify(source),
-    text: {
-      format: {
-        type: "json_schema",
-        name: "seena_accessible_content",
-        strict: true,
-        schema: adaptedContentJSONSchema
-      }
-    }
-  });
-  const parsed = adaptedContentResponseSchema.parse(JSON.parse(response.output_text));
-  return { ...parsed, usedFallback: false };
 }

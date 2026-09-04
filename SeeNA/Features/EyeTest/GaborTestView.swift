@@ -4,10 +4,12 @@ import SwiftUI
 struct GaborTestView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @StateObject private var model: GaborTestViewModel
     @State private var operatorResponses: [GaborResponse] = []
+    @State private var operatorGeometry: GaborPresentationGeometry?
 
     init(eye: Eye) {
         _model = StateObject(wrappedValue: GaborTestViewModel(eye: eye))
@@ -24,11 +26,11 @@ struct GaborTestView: View {
 
                     VoiceStatusPill(isListening: model.phase == .recording)
                     if model.operatorEntryEnabled {
-                        Button("Use operator response mode", action: showOperatorInput)
+                        Button("Use helper controls", action: showOperatorInput)
                             .buttonStyle(SecondaryActionStyle())
                             .frame(minHeight: 44)
                     }
-                    Text("GABOR PATTERN TASK")
+                    Text("PATTERN TASK")
                         .font(.caption.weight(.semibold))
                         .tracking(0.7)
                         .foregroundStyle(SEENATheme.secondaryInk)
@@ -59,12 +61,15 @@ struct GaborTestView: View {
             isPresented: $model.showingOperatorInput,
             onDismiss: operatorInputDidDismiss
         ) {
-            GaborOperatorInputView(
-                targets: model.targets,
-                contrast: model.contrast,
-                responses: $operatorResponses,
-                submit: submitOperatorResponses
-            )
+            if let operatorGeometry {
+                GaborOperatorInputView(
+                    targets: model.targets,
+                    contrast: model.contrast,
+                    geometry: operatorGeometry,
+                    responses: $operatorResponses,
+                    submit: submitOperatorResponses
+                )
+            }
         }
     }
 
@@ -73,7 +78,7 @@ struct GaborTestView: View {
             HStack {
                 Text("\(model.eye.displayName.uppercased()) EYE")
                 Spacer()
-                Text("PATTERN LEVEL")
+                Text("PATTERN TASK")
             }
             .font(.caption.weight(.bold))
             .tracking(1.1)
@@ -89,7 +94,9 @@ struct GaborTestView: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.isScoredTargetVisible, let target = model.currentTarget {
+        if model.phase == .teaching {
+            orientationTeaching
+        } else if model.isScoredTargetVisible, let target = model.currentTarget {
             activeTarget(target)
         } else if case .retry(let message) = model.phase {
             retryCard(message)
@@ -98,6 +105,31 @@ struct GaborTestView: View {
         } else {
             positioning
         }
+    }
+
+    private var orientationTeaching: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            Image(systemName: "line.diagonal")
+                .font(.system(size: 72, weight: .bold))
+                .foregroundStyle(Color.black)
+                .accessibilityHidden(true)
+            Text(GaborTestViewModel.orientationInstruction)
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(Color.black)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.8)
+            Text("Listen, then answer after Start.")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(SEENATheme.secondaryInk)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "How to answer. \(GaborTestViewModel.orientationInstruction) Listen, then answer after Start."
+        )
     }
 
     private func activeTarget(_ target: GaborOrientation) -> some View {
@@ -112,21 +144,26 @@ struct GaborTestView: View {
             .foregroundStyle(SEENATheme.secondaryInk)
 
             GeometryReader { proxy in
-                let available = min(proxy.size.width * 0.72, proxy.size.height * 0.72)
-                let targetSize = min(220, max(180, available))
+                let available = min(proxy.size.width - 4, proxy.size.height - 4)
+                let proposedTargetSize = max(180, available)
+                let proposedGeometry = GaborPresentationGeometry(
+                    pointDiameter: Double(proposedTargetSize),
+                    displayScale: Double(displayScale)
+                )
+                let displayedGeometry = model.presentationGeometry ?? proposedGeometry
 
                 ZStack {
-                    GaborSingleTargetView(
-                        orientation: target,
-                        contrast: model.contrast,
-                        size: targetSize
-                    )
-                    .id("\(model.contrast)-\(model.completedTargetCount)")
-                    .transition(
-                        reduceMotion
-                            ? .opacity
-                            : .scale(scale: 0.94).combined(with: .opacity)
-                    )
+                    if let displayedGeometry {
+                        GaborSingleTargetView(
+                            orientation: target,
+                            contrast: model.contrast,
+                            geometry: displayedGeometry
+                        )
+                        .id("\(model.contrast)-\(model.completedTargetCount)")
+                        // Fade between targets without scaling the scored patch.
+                        // Its measured diameter stays constant for the full answer.
+                        .transition(.opacity)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .animation(
@@ -135,6 +172,19 @@ struct GaborTestView: View {
                         : .spring(response: 0.36, dampingFraction: 0.84),
                     value: model.completedTargetCount
                 )
+                .onAppear {
+                    if let proposedGeometry {
+                        model.registerDisplayedTarget(proposedGeometry)
+                    }
+                }
+                .onChange(of: proposedTargetSize) { _, newValue in
+                    if let geometry = GaborPresentationGeometry(
+                        pointDiameter: Double(newValue),
+                        displayScale: Double(displayScale)
+                    ) {
+                        model.registerDisplayedTarget(geometry)
+                    }
+                }
             }
 
             if case .retry(let message) = model.phase {
@@ -144,7 +194,7 @@ struct GaborTestView: View {
                         .foregroundStyle(SEENATheme.secondaryInk)
                         .multilineTextAlignment(.center)
                     if model.operatorEntryEnabled {
-                        Button("Use operator input", action: showOperatorInput)
+                        Button("Use helper controls", action: showOperatorInput)
                             .buttonStyle(SecondaryActionStyle())
                             .frame(minHeight: 44)
                     }
@@ -201,6 +251,18 @@ struct GaborTestView: View {
             Text(transitionMessage)
                 .font(.system(.title3, design: .rounded, weight: .semibold))
                 .multilineTextAlignment(.center)
+            if model.phase == .needsRepeat {
+                Button("Repeat pattern task") {
+                    Task {
+                        await model.repeatBlock(
+                            dependencies: dependencies,
+                            session: session
+                        )
+                    }
+                }
+                .buttonStyle(PrimaryActionStyle())
+                .accessibilityHint("Restarts positioning and repeats this eye's pattern task")
+            }
             Spacer()
         }
         .animation(
@@ -218,7 +280,15 @@ struct GaborTestView: View {
     }
 
     private var transitionMessage: String {
-        model.completionDisposition?.screenMessage ?? "Preparing the next pattern level"
+        if model.phase == .teaching {
+            return GaborTestViewModel.orientationInstruction
+        }
+        if let message = model.completionDisposition?.screenMessage {
+            return message
+        }
+        return model.phase == .checking
+            ? "Finishing your pattern task"
+            : "Getting the pattern ready"
     }
 
     private func retryCard(_ message: String) -> some View {
@@ -234,7 +304,7 @@ struct GaborTestView: View {
             }
             .buttonStyle(PrimaryActionStyle())
             if model.operatorEntryEnabled {
-                Button("Use operator input", action: showOperatorInput)
+                Button("Use helper controls", action: showOperatorInput)
                     .buttonStyle(SecondaryActionStyle())
                     .frame(minHeight: 44)
             }
@@ -243,15 +313,19 @@ struct GaborTestView: View {
     }
 
     private func showOperatorInput() {
-        guard model.operatorEntryEnabled else { return }
+        guard model.operatorEntryEnabled,
+              let geometry = model.presentationGeometry else { return }
         operatorResponses = []
+        operatorGeometry = geometry
         model.presentOperatorInput(using: dependencies)
     }
 
     private func submitOperatorResponses() {
+        guard let operatorGeometry else { return }
         Task {
             await model.submitOperatorResponses(
                 operatorResponses,
+                displayedGeometry: operatorGeometry,
                 dependencies: dependencies,
                 session: session
             )
@@ -260,6 +334,7 @@ struct GaborTestView: View {
 
     private func operatorInputDidDismiss() {
         model.operatorInputDidDismiss(dependencies: dependencies, session: session)
+        operatorGeometry = nil
     }
 }
 
@@ -267,6 +342,7 @@ private struct GaborOperatorInputView: View {
     @Environment(\.dismiss) private var dismiss
     let targets: [GaborOrientation]
     let contrast: Double
+    let geometry: GaborPresentationGeometry
     @Binding var responses: [GaborResponse]
     let submit: () -> Void
 
@@ -274,18 +350,21 @@ private struct GaborOperatorInputView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 22) {
-                Text("Operator response")
+                Text("Helper controls")
                     .font(.title2.bold())
 
                 if targets.indices.contains(responses.count) {
                     GaborSingleTargetView(
                         orientation: targets[responses.count],
                         contrast: contrast,
-                        size: 190
+                        geometry: geometry
                     )
                 }
 
-                Text("Target \(min(responses.count + 1, 7)) of 7")
+                Text(
+                    "Target \(min(responses.count + 1, SequentialGaborSession.requiredTargetCount)) "
+                        + "of \(SequentialGaborSession.requiredTargetCount)"
+                )
                     .font(.headline)
 
                     responseButton("Left", response: .left)
@@ -295,13 +374,13 @@ private struct GaborOperatorInputView: View {
                 Button("Undo") { _ = responses.popLast() }
                     .disabled(responses.isEmpty)
 
-                    Button("Submit operator responses", action: submit)
+                    Button("Submit answers", action: submit)
                         .buttonStyle(PrimaryActionStyle())
-                        .disabled(responses.count != 7)
+                        .disabled(responses.count != SequentialGaborSession.requiredTargetCount)
                 }
-                .padding(24)
+                .padding(12)
             }
-            .navigationTitle("Operator fallback")
+            .navigationTitle("Helper response")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -313,7 +392,7 @@ private struct GaborOperatorInputView: View {
 
     private func responseButton(_ title: String, response: GaborResponse) -> some View {
         Button(title) {
-            guard responses.count < 7 else { return }
+            guard responses.count < SequentialGaborSession.requiredTargetCount else { return }
             responses.append(response)
         }
         .buttonStyle(SecondaryActionStyle())

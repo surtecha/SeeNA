@@ -6,6 +6,8 @@ private struct SessionEnvelope: Codable {
 }
 
 actor SessionStore {
+    nonisolated static let maximumRetainedSessions = 50
+
     private let inMemory: Bool
     private var memorySessions: [ScreeningSession] = []
     private let fileURL: URL?
@@ -44,7 +46,7 @@ actor SessionStore {
     }
 
     func loadSessions() throws -> [ScreeningSession] {
-        if inMemory { return memorySessions.sorted { $0.createdAt > $1.createdAt } }
+        if inMemory { return Self.normalized(memorySessions) }
         guard let fileURL, FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         let data: Data
         do {
@@ -59,7 +61,15 @@ actor SessionStore {
             throw StoreError.corruptHistory
         }
         guard envelope.schemaVersion == 1 else { throw StoreError.unsupportedSchema }
-        return envelope.sessions.sorted { $0.createdAt > $1.createdAt }
+        let normalizedSessions = Self.normalized(envelope.sessions)
+        if normalizedSessions != envelope.sessions {
+            // Enforce retention for histories created by older builds too,
+            // rather than waiting indefinitely for another completed session.
+            // The injected writer and `.atomic` production write preserve the
+            // original file if compaction cannot complete.
+            try write(normalizedSessions)
+        }
+        return normalizedSessions
     }
 
     func save(_ session: ScreeningSession) throws {
@@ -91,12 +101,13 @@ actor SessionStore {
     }
 
     private func write(_ sessions: [ScreeningSession]) throws {
+        let normalizedSessions = Self.normalized(sessions)
         if inMemory {
-            memorySessions = sessions
+            memorySessions = normalizedSessions
             return
         }
         guard let fileURL else { throw StoreError.storageUnavailable }
-        let envelope = SessionEnvelope(schemaVersion: 1, sessions: sessions)
+        let envelope = SessionEnvelope(schemaVersion: 1, sessions: normalizedSessions)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data: Data
@@ -110,6 +121,52 @@ actor SessionStore {
         } catch {
             throw StoreError.writeFailed
         }
+    }
+
+    /// Newest-first order is stable even when two sessions have the same
+    /// timestamp. A deterministic UUID tie-breaker keeps history presentation,
+    /// retention and encoded output reproducible across launches.
+    private nonisolated static func normalized(
+        _ sessions: [ScreeningSession]
+    ) -> [ScreeningSession] {
+        let sanitized = sessions.map(sanitizedForStorage)
+        return Array(
+            sanitized.sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt {
+                    return lhs.createdAt > rhs.createdAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            .prefix(maximumRetainedSessions)
+        )
+    }
+
+    /// Persistence is a trust boundary. A stale or tampered session-level flag
+    /// cannot keep result-level numeric measurements alive when the active
+    /// protocol release is not source-approved. Per-trial candidate and sensor
+    /// distances remain intact as auditable task evidence.
+    private nonisolated static func sanitizedForStorage(
+        _ session: ScreeningSession
+    ) -> ScreeningSession {
+        var sanitized = session
+        let numericReleaseAuthorized = session.numericResultsAllowed == true &&
+            NumericResultEligibility.protocolReleaseIsApproved(.activePhoneLocator)
+        sanitized.numericResultsAllowed = numericReleaseAuthorized
+        if let right = sanitized.rightEyeResult {
+            sanitized.rightEyeResult = NumericResultEligibility.sanitize(
+                right,
+                numericResultsAllowed: numericReleaseAuthorized,
+                protocolDescriptor: .activePhoneLocator
+            )
+        }
+        if let left = sanitized.leftEyeResult {
+            sanitized.leftEyeResult = NumericResultEligibility.sanitize(
+                left,
+                numericResultsAllowed: numericReleaseAuthorized,
+                protocolDescriptor: .activePhoneLocator
+            )
+        }
+        return sanitized
     }
 
     nonisolated static func allowsDestructiveRecovery(after error: Error) -> Bool {

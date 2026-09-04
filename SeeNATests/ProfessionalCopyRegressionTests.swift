@@ -18,7 +18,12 @@ final class ProfessionalCopyRegressionTests: XCTestCase {
             "validation is not",
             "numeric verification",
             "unvalidated device",
-            "ai does not create"
+            "ai does not create",
+            "orientation task",
+            "task performance",
+            "evidence review required",
+            "internal consistency checks",
+            "numeric comparison"
         ]
 
         for phrase in disallowed {
@@ -30,6 +35,50 @@ final class ProfessionalCopyRegressionTests: XCTestCase {
         let theme = try source(named: "SeeNA/App/AppTheme.swift")
         XCTAssertTrue(theme.localizedCaseInsensitiveContains("vision screening · not a prescription"))
         XCTAssertFalse(theme.localizedCaseInsensitiveContains("research prototype"))
+    }
+
+    func testResultSurfaceUsesPlainTaskLanguage() throws {
+        let results = try [
+            source(named: "SeeNA/Features/Results/ResultsViews.swift"),
+            source(named: "SeeNA/Features/Results/ResultSummaryComponents.swift")
+        ].joined(separator: "\n")
+
+        XCTAssertTrue(results.contains("Your answers were recorded for both eyes."))
+        XCTAssertTrue(results.contains("Continue routine eye checks with an eye care professional."))
+        XCTAssertTrue(results.contains("Circle task"))
+        XCTAssertTrue(results.contains("Pattern task"))
+        XCTAssertFalse(results.localizedCaseInsensitiveContains("cannot support a numeric comparison"))
+        XCTAssertFalse(results.localizedCaseInsensitiveContains("evidence review required"))
+        XCTAssertFalse(results.localizedCaseInsensitiveContains("orientation task complete"))
+    }
+
+    func testActiveGaborCopyDescribesOneSimplePatternTask() throws {
+        let combinedSource = try [
+            source(named: "SeeNA/Engines/GaborContrastEngine.swift"),
+            source(named: "SeeNA/Features/EyeTest/GaborTestView.swift"),
+            source(named: "SeeNA/Features/EyeTest/GaborTestViewModel.swift")
+        ].joined(separator: "\n")
+
+        XCTAssertTrue(combinedSource.contains("PATTERN TASK"))
+        XCTAssertTrue(combinedSource.contains("TASK COMPLETE"))
+        for staleCopy in [
+            "PATTERN LEVEL",
+            "Preparing the next pattern level",
+            "ORIENTATION TASK COMPLETE",
+            "non-clinical Gabor orientation task complete",
+            "Finished, but this orientation task needs repeating"
+        ] {
+            XCTAssertFalse(
+                combinedSource.localizedCaseInsensitiveContains(staleCopy),
+                "Single-block Gabor flow exposes stale copy: \(staleCopy)"
+            )
+        }
+
+        let model = try source(named: "SeeNA/Features/EyeTest/GaborTestViewModel.swift")
+        let engine = try source(named: "SeeNA/Engines/ThresholdSearchEngine.swift")
+        XCTAssertTrue(model.contains("let targetDistance = 0.40"))
+        XCTAssertFalse(model.localizedCaseInsensitiveContains("eighty centimetres"))
+        XCTAssertTrue(engine.contains("maximumActivePhoneLocatorDistanceMetres = 0.40"))
     }
 
     func testCalibrationHarnessHasNoReleaseJourneyEntryPoint() throws {

@@ -34,8 +34,6 @@ struct NetworkConfiguration: Sendable {
 
 enum TranscriptionMode: String, Codable, Sendable {
     case singleDirection
-    case directionBlock
-    case readabilityPhrase
     case constrainedChoice
 }
 
@@ -118,24 +116,6 @@ struct ExplanationResponse: Codable, Sendable {
     let usedFallback: Bool?
 }
 
-struct AdaptContentRequest: Codable, Sendable {
-    let locale: String
-    let contentID: String
-    let highContrast: Bool
-    let readAloud: Bool
-    let simplifiedContent: Bool
-}
-
-struct AdaptedContentResponse: Codable, Sendable {
-    let title: String
-    let summary: String
-    let steps: [String]
-    let deadline: String
-    let primaryAction: String
-    let readAloudText: String
-    let usedFallback: Bool?
-}
-
 actor BackendClient {
     private let configuration: NetworkConfiguration
     private let session: URLSession
@@ -165,7 +145,10 @@ actor BackendClient {
         var request = try makeRequest(path: "/api/transcribe-block", method: "POST")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let data = try await sendWithSingleRetry(request)
+        let data = try await sendTranscription(
+            request,
+            policy: .interactiveAnswer
+        )
         return try JSONDecoder().decode(TranscriptionResponse.self, from: data)
     }
 
@@ -173,16 +156,12 @@ actor BackendClient {
         try await postJSON(path: "/api/explain-result", value: facts, response: ExplanationResponse.self)
     }
 
-    func adapt(_ requestValue: AdaptContentRequest) async throws -> AdaptedContentResponse {
-        try await postJSON(path: "/api/adapt-content", value: requestValue, response: AdaptedContentResponse.self)
-    }
-
     func speech(text: String, locale: String = "en-AU") async throws -> Data {
         var request = try makeRequest(path: "/api/speak", method: "POST")
         // Voice guidance must never freeze a hands-free journey behind two
-        // long network attempts. If natural speech is not ready promptly, the
-        // caller immediately falls back to the best on-device female voice.
-        request.timeoutInterval = 8
+        // long network attempts. This deadline deliberately leaves most of the
+        // transition budget available for the on-device female fallback.
+        request.timeoutInterval = SpeechTransportPolicy.handsFreePrompt.remoteAttemptTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(SpeechRequest(text: text, locale: locale))
         return try await sendOnce(request)
@@ -234,6 +213,94 @@ actor BackendClient {
         throw lastError ?? BackendError.invalidResponse
     }
 
+    private func sendTranscription(
+        _ request: URLRequest,
+        policy: TranscriptionTransportPolicy
+    ) async throws -> Data {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        var attempt = 0
+
+        while attempt < 2 {
+            try Task.checkCancellation()
+            let elapsed = startedAt.duration(to: clock.now)
+            let elapsedNanoseconds = elapsed.nanosecondsClampedToUInt64
+            guard let timeout = policy.timeoutNanoseconds(
+                forAttempt: attempt,
+                elapsedNanoseconds: elapsedNanoseconds
+            ) else {
+                throw BackendError.requestTimedOut
+            }
+
+            do {
+                let payload = try await perform(request, timeoutNanoseconds: timeout)
+                if (200..<300).contains(payload.statusCode) {
+                    return payload.data
+                }
+                guard policy.shouldRetry(
+                    statusCode: payload.statusCode,
+                    completedAttempt: attempt
+                ) else {
+                    throw BackendError.serverStatus(payload.statusCode)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError {
+                guard policy.shouldRetry(
+                    urlErrorCode: error.code,
+                    completedAttempt: attempt
+                ) else {
+                    throw error
+                }
+            } catch BackendError.requestTimedOut {
+                // A timed-out POST may already be executing upstream. Retrying
+                // it could duplicate provider work and still exceed the voice
+                // interaction budget, so surface the timeout immediately.
+                throw BackendError.requestTimedOut
+            }
+
+            attempt += 1
+            let elapsedBeforeDelay = startedAt.duration(to: clock.now).nanosecondsClampedToUInt64
+            guard elapsedBeforeDelay < policy.totalBudgetNanoseconds else {
+                throw BackendError.requestTimedOut
+            }
+            let availableDelay = policy.totalBudgetNanoseconds - elapsedBeforeDelay
+            try await Task.sleep(nanoseconds: min(policy.retryDelayNanoseconds, availableDelay))
+        }
+        throw BackendError.invalidResponse
+    }
+
+    private func perform(
+        _ request: URLRequest,
+        timeoutNanoseconds: UInt64
+    ) async throws -> HTTPPayload {
+        let session = self.session
+        return try await withThrowingTaskGroup(of: AttemptResult.self) { group in
+            group.addTask {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw BackendError.invalidResponse
+                }
+                return .response(HTTPPayload(data: data, statusCode: http.statusCode))
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                return .timedOut
+            }
+
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else {
+                throw BackendError.invalidResponse
+            }
+            switch first {
+            case .response(let payload):
+                return payload
+            case .timedOut:
+                throw BackendError.requestTimedOut
+            }
+        }
+    }
+
     private func sendOnce(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -248,21 +315,47 @@ actor BackendClient {
     enum BackendError: LocalizedError {
         case invalidConfiguration
         case invalidResponse
+        case requestTimedOut
         case serverStatus(Int)
 
         var errorDescription: String? {
             switch self {
             case .invalidConfiguration: return "The SeeNA backend URL is not configured."
             case .invalidResponse: return "The SeeNA backend returned an invalid response."
+            case .requestTimedOut: return "The voice response took too long. Please answer again."
             case .serverStatus(let status): return "The SeeNA backend returned status \(status)."
             }
         }
     }
 }
 
+private struct HTTPPayload: Sendable {
+    let data: Data
+    let statusCode: Int
+}
+
+private enum AttemptResult: Sendable {
+    case response(HTTPPayload)
+    case timedOut
+}
+
 private struct SpeechRequest: Encodable {
     let text: String
     let locale: String
+}
+
+private extension Duration {
+    var nanosecondsClampedToUInt64: UInt64 {
+        let parts = components
+        guard parts.seconds >= 0 else { return 0 }
+        let seconds = UInt64(parts.seconds)
+        let attoseconds = max(0, parts.attoseconds)
+        let nanosFromAttoseconds = UInt64(attoseconds / 1_000_000_000)
+        let (secondsNanos, overflow) = seconds.multipliedReportingOverflow(by: 1_000_000_000)
+        guard !overflow else { return .max }
+        let (total, additionOverflow) = secondsNanos.addingReportingOverflow(nanosFromAttoseconds)
+        return additionOverflow ? .max : total
+    }
 }
 
 private extension Data {

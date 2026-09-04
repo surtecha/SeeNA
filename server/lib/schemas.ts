@@ -71,24 +71,6 @@ export const explanationResponseSchema = z.object({
   verification: resultVerificationSchema
 }).strict();
 
-export const adaptContentRequestSchema = z.object({
-  locale: z.string().min(2).max(20),
-  contentID: z.literal("medical-travel-support-v1"),
-  highContrast: z.boolean(),
-  readAloud: z.boolean(),
-  simplifiedContent: z.boolean()
-}).strict();
-
-export const adaptedContentResponseSchema = z.object({
-  title: z.string().min(1).max(100),
-  summary: z.string().min(1).max(300),
-  steps: z.array(z.string().min(1).max(160)).min(1).max(8),
-  deadline: z.string().min(1).max(80),
-  primaryAction: z.string().min(1).max(80),
-  readAloudText: z.string().min(1).max(700),
-  usedFallback: z.boolean()
-}).strict();
-
 export const explanationDraftJSONSchema = {
   type: "object",
   additionalProperties: false,
@@ -115,24 +97,7 @@ export const explanationVerificationJSONSchema = {
   }
 } as const;
 
-export const adaptedContentJSONSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["title", "summary", "steps", "deadline", "primaryAction", "readAloudText", "usedFallback"],
-  properties: {
-    title: { type: "string" },
-    summary: { type: "string" },
-    steps: { type: "array", items: { type: "string" } },
-    deadline: { type: "string" },
-    primaryAction: { type: "string" },
-    readAloudText: { type: "string" },
-    usedFallback: { type: "boolean" }
-  }
-} as const;
-
 export type ExplanationRequest = z.infer<typeof explanationRequestSchema>;
 export type ExplanationResponse = z.infer<typeof explanationResponseSchema>;
 export type ExplanationDraftResponse = z.infer<typeof explanationDraftResponseSchema>;
 export type ResultVerification = z.infer<typeof resultVerificationSchema>;
-export type AdaptContentRequest = z.infer<typeof adaptContentRequestSchema>;
-export type AdaptedContentResponse = z.infer<typeof adaptedContentResponseSchema>;

@@ -37,12 +37,15 @@ let package = Package(
                 "Engines/FaceAlignmentEngine.swift",
                 "Engines/MeasurementEngines.swift",
                 "Engines/GaborContrastEngine.swift",
+                "Engines/GuidanceSpeechPolicy.swift",
                 "Engines/MotionStationarityEvaluator.swift",
                 "Engines/ResultIntegrityValidator.swift",
                 "Engines/ResultsPresentationPolicy.swift",
+                "Engines/SceneLifecycleCoordinator.swift",
                 "Engines/SequentialGaborSession.swift",
                 "Engines/SequentialOptotypeSession.swift",
                 "Engines/ThresholdSearchEngine.swift",
+                "Engines/VoiceCapturePolicy.swift",
                 "Persistence/SessionStore.swift"
             ]
         ),

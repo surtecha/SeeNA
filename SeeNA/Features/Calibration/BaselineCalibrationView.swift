@@ -5,6 +5,7 @@ struct BaselineCalibrationView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var model: CalibrationViewModel
 
     init(model: CalibrationViewModel) {
@@ -27,22 +28,16 @@ struct BaselineCalibrationView: View {
         ) {
             CalibrationStage(model: model, reduceMotion: reduceMotion)
 
-            HStack(spacing: 10) {
-                CalibrationPill(
-                    title: model.sample?.phoneStable == true ? "PHONE STILL" : "KEEP PHONE STILL",
-                    symbol: "iphone",
-                    ready: model.sample?.phoneStable == true
-                )
-                CalibrationPill(
-                    title: model.headReady ? "FACE CENTRED" : "FACE THE PHONE",
-                    symbol: "person.crop.circle",
-                    ready: model.headReady
-                )
-                CalibrationPill(
-                    title: model.gazeState == .aligned ? "LOOKING CENTRE" : "LOOK AT CENTRE",
-                    symbol: "eye",
-                    ready: model.gazeState == .aligned
-                )
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    LazyVGrid(columns: [GridItem(.flexible())], spacing: 10) {
+                        calibrationPills
+                    }
+                } else {
+                    HStack(spacing: 10) {
+                        calibrationPills
+                    }
+                }
             }
 
             ProgressLine(title: model.instruction, value: model.proximityProgress)
@@ -60,18 +55,40 @@ struct BaselineCalibrationView: View {
         .navigationTitle("Distance setup")
         .navigationBarTitleDisplayMode(.inline)
     }
+
+    @ViewBuilder
+    private var calibrationPills: some View {
+        CalibrationPill(
+            title: model.sample?.phoneStable == true ? "PHONE STILL" : "KEEP PHONE STILL",
+            symbol: "iphone",
+            ready: model.sample?.phoneStable == true
+        )
+        CalibrationPill(
+            title: model.headReady ? "FACE CENTRED" : "FACE THE PHONE",
+            symbol: "person.crop.circle",
+            ready: model.headReady
+        )
+        CalibrationPill(
+            title: model.gazeState == .aligned ? "LOOKING CENTRE" : "LOOK AT CENTRE",
+            symbol: "eye",
+            ready: model.gazeState == .aligned,
+            advisory: true
+        )
+    }
 }
 
 private struct CalibrationStage: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let model: CalibrationViewModel
     let reduceMotion: Bool
+    @ScaledMetric(relativeTo: .largeTitle) private var distanceTextSize = 42.0
 
     var body: some View {
         VStack(spacing: 18) {
             Text(model.didCapture ? "BASELINE SAVED" : "YOUR DISTANCE")
                 .font(.caption.weight(.bold))
                 .tracking(1.4)
-                .foregroundStyle(Color.white.opacity(0.55))
+                .foregroundStyle(Color.white.opacity(0.78))
 
             ZStack {
                 Circle()
@@ -97,16 +114,20 @@ private struct CalibrationStage: View {
                             .contentTransition(.symbolEffect(.replace))
                     } else {
                         Text(model.distanceLabel)
-                            .font(.system(size: 42, weight: .bold, design: .rounded))
+                            .font(.system(size: min(distanceTextSize, 62), weight: .bold, design: .rounded))
                             .foregroundStyle(Color.white)
                             .monospacedDigit()
                             .contentTransition(.numericText())
                     }
-                    Text(model.instruction.uppercased())
-                        .font(.caption2.weight(.bold))
-                        .tracking(0.7)
-                        .foregroundStyle(Color.white.opacity(0.62))
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        calibrationInstruction
+                    }
                 }
+            }
+
+            if dynamicTypeSize.isAccessibilitySize {
+                calibrationInstruction
+                    .multilineTextAlignment(.center)
             }
         }
         .padding(22)
@@ -116,12 +137,22 @@ private struct CalibrationStage: View {
         .accessibilityLabel("Forty centimetre distance setup")
         .accessibilityValue("\(model.distanceLabel). \(model.instruction)")
     }
+
+    private var calibrationInstruction: some View {
+        Text(model.instruction.uppercased())
+            .font(.caption2.weight(.bold))
+            .tracking(0.7)
+            .foregroundStyle(Color.white.opacity(0.78))
+            .fixedSize(horizontal: false, vertical: true)
+    }
 }
 
 private struct CalibrationPill: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let symbol: String
     let ready: Bool
+    var advisory = false
 
     var body: some View {
         Label(title, systemImage: ready ? "checkmark" : symbol)
@@ -129,10 +160,23 @@ private struct CalibrationPill: View {
             .tracking(0.35)
             .foregroundStyle(ready ? Color.white : SEENATheme.secondaryInk)
             .frame(maxWidth: .infinity)
-            .frame(height: 48)
-            .background(ready ? Color.black : SEENATheme.card, in: Capsule())
-            .animation(.snappy(duration: 0.3), value: ready)
-            .accessibilityElement(children: .combine)
-            .accessibilityValue(ready ? "Ready" : "Not ready")
+            .frame(minHeight: 48)
+            .padding(.vertical, 5)
+            .background {
+                if dynamicTypeSize.isAccessibilitySize {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(ready ? Color.black : SEENATheme.card)
+                } else {
+                    Capsule()
+                        .fill(ready ? Color.black : SEENATheme.card)
+                }
+            }
+        .animation(.snappy(duration: 0.3), value: ready)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(
+            advisory
+                ? (ready ? "Centred" : "Try looking at the centre")
+                : (ready ? "Ready" : "Not ready")
+        )
     }
 }

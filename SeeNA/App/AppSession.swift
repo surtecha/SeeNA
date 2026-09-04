@@ -103,6 +103,7 @@ final class AppSession: ObservableObject {
     @Published var persistenceState: SessionPersistenceState = .unknown
     @Published var responseMode: ScreeningResponseMode = .voicePreferred
     @Published var safetyStopReason: SafetyStopReason?
+    private var sceneLifecycle = SceneLifecycleCoordinator()
 
     init() {
 #if DEBUG
@@ -144,24 +145,27 @@ final class AppSession: ObservableObject {
     }
 
     private func announce(_ route: AppRoute) {
+        // These destinations immediately own the spoken-guidance channel.
+        // Posting an independent VoiceOver screen announcement at the same
+        // time creates two competing voices, so let their route-aware prompt
+        // provide the audible context instead. Passive destinations retain a
+        // concise screen-change announcement.
+        switch route {
+        case .eligibility, .safetyStop, .permissions, .deviceCheck,
+             .phoneSetup, .calibration, .rightEyeInstructions,
+             .rightEyeTest, .rightGaborTest, .leftEyeInstructions,
+             .leftEyeTest, .leftGaborTest, .results:
+            return
+        case .processing, .evidence, .history:
+            break
+        }
+
         let label: String
         switch route {
-        case .eligibility: label = "Safety check"
-        case .safetyStop: label = "Screening stopped"
-        case .permissions: label = "Camera and microphone access"
-        case .deviceCheck: label = "Device check"
-        case .phoneSetup: label = "Phone setup"
-        case .calibration: label = "Distance setup"
-        case .rightEyeInstructions: label = "Right eye instructions"
-        case .rightEyeTest: label = "Right eye Landolt task"
-        case .rightGaborTest: label = "Right eye Gabor pattern task"
-        case .leftEyeInstructions: label = "Left eye instructions"
-        case .leftEyeTest: label = "Left eye Landolt task"
-        case .leftGaborTest: label = "Left eye Gabor pattern task"
         case .processing: label = "Saving screening"
-        case .results: label = "Screening results"
         case .evidence: label = "Answer audit"
         case .history: label = "Previous sessions"
+        default: return
         }
         DispatchQueue.main.async {
             UIAccessibility.post(notification: .screenChanged, argument: label)
@@ -190,6 +194,26 @@ final class AppSession: ObservableObject {
         responseMode = .voicePreferred
         safetyStopReason = nil
         didTapStart = false
+    }
+
+    /// Marks the first inactive/background transition in a suspension cycle.
+    /// Returning `false` makes repeated `.inactive` -> `.background` delivery
+    /// idempotent, so camera and audio teardown cannot race each other twice.
+    @discardableResult
+    func beginSceneSuspension() -> Bool {
+        guard sceneLifecycle.beginSuspension() else { return false }
+        sensorState = nil
+        return true
+    }
+
+    /// Consumes the suspension exactly once and calculates the resources that
+    /// the *current* route still needs. This avoids restoring a stale capture
+    /// state if navigation changed while the app was inactive.
+    func consumeSceneResumePlan() -> SceneResumePlan? {
+        sceneLifecycle.consumeResumePlan(
+            requiresLiveSensors: requiresLiveSensors,
+            requiresScreeningBrightness: requiresScreeningBrightness
+        )
     }
 
     var requiresLiveSensors: Bool {

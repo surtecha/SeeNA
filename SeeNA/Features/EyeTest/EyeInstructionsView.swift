@@ -11,6 +11,7 @@ private final class EyeReadyViewModel {
     func begin(eye: Eye, session: AppSession, dependencies: AppDependencies) async {
         guard !hasStarted else { return }
         hasStarted = true
+        defer { hasStarted = false }
         await listenForReady(eye: eye, session: session, dependencies: dependencies)
     }
 
@@ -19,52 +20,57 @@ private final class EyeReadyViewModel {
     }
 
     private func listenForReady(eye: Eye, session: AppSession, dependencies: AppDependencies) async {
-        phase = .speaking
+        let instructionRoute: AppRoute = eye == .right ? .rightEyeInstructions : .leftEyeInstructions
 #if DEBUG
         if dependencies.sensorCoordinator.isSimulatorVoiceAutomationEnabled {
             phase = .waiting
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled,
-                  session.path.last == (eye == .right ? .rightEyeInstructions : .leftEyeInstructions) else { return }
+                  session.path.last == instructionRoute else { return }
             continueNow(eye: eye, session: session)
             return
         }
 #endif
-        _ = await dependencies.spokenPrompts.speakForTransition(
-            "Cover your \(eye.eyeToCover) eye without pressing. Say yes when ready."
-        )
-        guard session.path.last == (eye == .right ? .rightEyeInstructions : .leftEyeInstructions) else { return }
-        guard session.responseMode == .voicePreferred, dependencies.network.isConnected else {
-            phase = .waiting
-            return
-        }
-        do {
-            phase = .listening
-            let recording = try await dependencies.audioRecorder.record(maximumDuration: 8)
-            defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
-            let response = try await dependencies.backend.transcribe(
-                audioURL: recording.fileURL,
-                mode: .constrainedChoice,
-                choiceSetID: "readAloud"
-            )
-            if response.valid, response.choice == "yes" {
-                HapticFeedback.success()
-                continueNow(eye: eye, session: session)
-            } else {
+        var nextPrompt = "Cover your \(eye.eyeToCover) eye without pressing. Say yes when ready."
+
+        while !Task.isCancelled, session.path.last == instructionRoute {
+            phase = .speaking
+            _ = await dependencies.spokenPrompts.speakForTransition(nextPrompt)
+
+            guard !Task.isCancelled, session.path.last == instructionRoute else { return }
+            guard session.responseMode == .voicePreferred, dependencies.network.isConnected else {
                 phase = .waiting
-                _ = await dependencies.spokenPrompts.speakForTransition(
-                    "Take your time. Say yes when you are ready."
-                )
-                guard !Task.isCancelled,
-                      session.path.last == (eye == .right ? .rightEyeInstructions : .leftEyeInstructions) else { return }
-                hasStarted = false
-                await begin(eye: eye, session: session, dependencies: dependencies)
+                return
             }
-        } catch is CancellationError {
-            return
-        } catch {
-            phase = .waiting
-            dependencies.spokenPrompts.speak("I couldn’t hear you. Say yes again, or use the ready button.")
+
+            do {
+                phase = .listening
+                let recording = try await dependencies.audioRecorder.record(maximumDuration: 8)
+                defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
+
+                if recording.adequateLevel {
+                    let response = try await dependencies.backend.transcribe(
+                        audioURL: recording.fileURL,
+                        mode: .constrainedChoice,
+                        choiceSetID: "readAloud"
+                    )
+                    guard !Task.isCancelled, session.path.last == instructionRoute else { return }
+                    if response.valid, response.choice == "yes" {
+                        HapticFeedback.success()
+                        continueNow(eye: eye, session: session)
+                        return
+                    }
+                }
+
+                phase = .waiting
+                nextPrompt = "I didn’t catch that. Take your time, then say yes when ready."
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, session.path.last == instructionRoute else { return }
+                phase = .waiting
+                nextPrompt = "I couldn’t hear you. Take your time, then say yes again."
+            }
         }
     }
 

@@ -1,15 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-export type Endpoint = "speak" | "transcribe" | "explain" | "adapt";
+export type Endpoint = "speak" | "transcribe" | "explain";
 
 const requestLog = new Map<string, { timestamp: number; cost: number }[]>();
 const WINDOW_MS = 60_000;
 const endpointPolicy: Record<Endpoint, { requests: number; cost: number; maxBytes: number }> = {
   speak: { requests: 12, cost: 6, maxBytes: 2_000 },
   transcribe: { requests: 18, cost: 4, maxBytes: 5_300_000 },
-  explain: { requests: 8, cost: 2, maxBytes: 4_000 },
-  adapt: { requests: 6, cost: 2, maxBytes: 2_000 }
+  explain: { requests: 8, cost: 2, maxBytes: 4_000 }
 };
 const MAX_COST_PER_MINUTE = 72;
 

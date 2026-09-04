@@ -5,6 +5,7 @@ struct PhoneSetupView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var model: PhoneSetupViewModel
 
     init(model: PhoneSetupViewModel) {
@@ -27,11 +28,19 @@ struct PhoneSetupView: View {
         ) {
             TrackingStage(model: model, reduceMotion: reduceMotion)
 
-            HStack(spacing: 8) {
-                TrackingPill(title: "FACE", symbol: "person.crop.circle", ready: model.faceReady)
-                TrackingPill(title: "STILL", symbol: "iphone", ready: model.phoneReady)
-                TrackingPill(title: "LIGHT", symbol: "sun.max", ready: model.lightReady)
-                TrackingPill(title: "GAZE", symbol: "eye", ready: model.gazeReady)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    LazyVGrid(
+                        columns: [GridItem(.flexible()), GridItem(.flexible())],
+                        spacing: 8
+                    ) {
+                        trackingPills
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        trackingPills
+                    }
+                }
             }
 
             ProgressLine(title: model.instruction, value: model.readinessProgress)
@@ -51,25 +60,43 @@ struct PhoneSetupView: View {
         .navigationTitle("Phone setup")
         .navigationBarTitleDisplayMode(.inline)
     }
+
+    @ViewBuilder
+    private var trackingPills: some View {
+        TrackingPill(title: "FACE", symbol: "person.crop.circle", ready: model.faceReady)
+        TrackingPill(title: "STILL", symbol: "iphone", ready: model.phoneReady)
+        TrackingPill(title: "LIGHT", symbol: "sun.max", ready: model.lightReady)
+        TrackingPill(
+            title: "CENTRE",
+            symbol: "eye",
+            ready: model.gazeReady,
+            advisory: true
+        )
+    }
 }
 
 private struct TrackingStage: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let model: PhoneSetupViewModel
     let reduceMotion: Bool
+    @ScaledMetric(relativeTo: .title) private var distanceTextSize = 30.0
 
     var body: some View {
         VStack(spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("LIVE DISTANCE")
-                    .font(.caption.weight(.bold))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.white.opacity(0.55))
-                Spacer()
-                Text(model.distanceLabel)
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.white)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        distanceTitle
+                        distanceValue
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(alignment: .firstTextBaseline) {
+                        distanceTitle
+                        Spacer()
+                        distanceValue
+                    }
+                }
             }
 
             ZStack {
@@ -89,7 +116,7 @@ private struct TrackingStage: View {
             Text(model.instruction.uppercased())
                 .font(.caption.weight(.bold))
                 .tracking(1.2)
-                .foregroundStyle(Color.white.opacity(model.isReady ? 1 : 0.62))
+                .foregroundStyle(Color.white.opacity(model.isReady ? 1 : 0.78))
                 .contentTransition(.opacity)
         }
         .padding(22)
@@ -98,6 +125,21 @@ private struct TrackingStage: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Live phone setup")
         .accessibilityValue("\(model.distanceLabel). \(model.instruction)")
+    }
+
+    private var distanceTitle: some View {
+        Text("LIVE DISTANCE")
+            .font(.caption.weight(.bold))
+            .tracking(1.4)
+            .foregroundStyle(Color.white.opacity(0.78))
+    }
+
+    private var distanceValue: some View {
+        Text(model.distanceLabel)
+            .font(.system(size: min(distanceTextSize, 48), weight: .bold, design: .rounded))
+            .foregroundStyle(Color.white)
+            .monospacedDigit()
+            .contentTransition(.numericText())
     }
 }
 
@@ -128,9 +170,11 @@ private struct GazeIndicator: View {
 }
 
 private struct TrackingPill: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let symbol: String
     let ready: Bool
+    var advisory = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -143,10 +187,23 @@ private struct TrackingPill: View {
         }
         .foregroundStyle(ready ? Color.white : SEENATheme.secondaryInk)
         .frame(maxWidth: .infinity)
-        .frame(height: 56)
-        .background(ready ? Color.black : SEENATheme.card, in: Capsule())
+        .frame(minHeight: 56)
+        .padding(.vertical, 5)
+        .background {
+            if dynamicTypeSize.isAccessibilitySize {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(ready ? Color.black : SEENATheme.card)
+            } else {
+                Capsule()
+                    .fill(ready ? Color.black : SEENATheme.card)
+            }
+        }
         .animation(.snappy(duration: 0.3), value: ready)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(ready ? "Ready" : "Not ready")
+        .accessibilityValue(
+            advisory
+                ? (ready ? "Centred" : "Try looking at the centre")
+                : (ready ? "Ready" : "Not ready")
+        )
     }
 }

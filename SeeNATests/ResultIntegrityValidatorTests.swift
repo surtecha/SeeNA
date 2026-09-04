@@ -105,7 +105,7 @@ final class ResultIntegrityValidatorTests: XCTestCase {
             profile: profile()
         )
 
-        XCTAssertEqual(validation.issues, [.uncertaintyExceedsProfile])
+        XCTAssertEqual(validation.issues, [.numericProtocolNotApproved, .uncertaintyExceedsProfile])
     }
 
     func testRejectsInvalidMeasuredValues() {
@@ -259,14 +259,64 @@ final class ResultIntegrityValidatorTests: XCTestCase {
         XCTAssertEqual(validation.issues, [.malformedSupportingEvidence, .missingSupportingEvidence])
     }
 
+    func testTrialAwareValidationRejectsMissingOrPartialGeometryEvidence() {
+        let screeningResult = result(
+            status: .validEstimate,
+            lastFail: -2.0,
+            firstPass: -2.25,
+            displayed: -2.25,
+            distance: 0.44,
+            uncertainty: 0.02,
+            repeatability: 0.01
+        )
+        let commonFail = trial(candidate: -2.0, distance: 0.50, outcome: .fail)
+        let commonPass = trial(candidate: -2.25, distance: 0.445, outcome: .pass)
+
+        let legacyNilGeometry = ResultIntegrityValidator.validate(
+            screeningResult,
+            against: [
+                commonFail,
+                commonPass,
+                trial(
+                    candidate: -2.25,
+                    distance: 0.44,
+                    outcome: .pass,
+                    includeGeometry: false
+                )
+            ]
+        )
+        XCTAssertEqual(
+            legacyNilGeometry.issues,
+            [.malformedSupportingEvidence, .missingSupportingEvidence]
+        )
+
+        let missingFrozenPresentation = ResultIntegrityValidator.validate(
+            screeningResult,
+            against: [
+                commonFail,
+                commonPass,
+                trial(
+                    candidate: -2.25,
+                    distance: 0.44,
+                    outcome: .pass,
+                    includePresentedGeometry: false
+                )
+            ]
+        )
+        XCTAssertEqual(
+            missingFrozenPresentation.issues,
+            [.malformedSupportingEvidence, .missingSupportingEvidence]
+        )
+    }
+
     func testTrialAwareQualitativeBoundariesRequireMatchingWitnesses() {
         let farthest = NumericResultEligibility.sanitize(
             result(
                 status: .noMyopiaDetectedWithinRange,
                 lastFail: nil,
-                firstPass: -0.5,
+                firstPass: -1.25,
                 displayed: nil,
-                distance: 1.98,
+                distance: 0.80,
                 uncertainty: 0.01,
                 repeatability: 0
             ),
@@ -289,8 +339,8 @@ final class ResultIntegrityValidatorTests: XCTestCase {
             ResultIntegrityValidator.validate(
                 farthest,
                 against: [
-                    trial(candidate: -0.5, distance: 1.99, outcome: .pass),
-                    trial(candidate: -0.5, distance: 1.98, outcome: .pass)
+                    trial(candidate: -1.25, distance: 0.795, outcome: .pass),
+                    trial(candidate: -1.25, distance: 0.80, outcome: .pass)
                 ]
             ).isValid
         )
@@ -379,17 +429,40 @@ final class ResultIntegrityValidatorTests: XCTestCase {
         outcome: TrialOutcome,
         responses: [OptotypeResponse]? = nil,
         correctCount: Int? = nil,
-        targetDistance: Double? = nil
+        targetDistance: Double? = nil,
+        includeGeometry: Bool = true,
+        includePresentedGeometry: Bool = true
     ) -> TrialBlock {
-        let targets: [OptotypeDirection] = [.up, .right, .down, .left, .up, .right, .down]
-        let actualResponses = responses ?? (outcome == .pass ? targets.map(OptotypeResponse.init) : Array(repeating: .left, count: 7))
+        let targets: [OptotypeDirection] = [
+            .up, .right, .down, .left, .up, .right, .down, .left
+        ]
+        let actualResponses = responses ?? (
+            outcome == .pass
+                ? targets.map(OptotypeResponse.init)
+                : Array(repeating: .left, count: SequentialOptotypeSession.requiredTargetCount)
+        )
         let actualCorrectCount = correctCount ?? zip(targets, actualResponses).reduce(into: 0) { count, pair in
             if pair.1.matches(pair.0) { count += 1 }
+        }
+        let requestedTargetDistance = targetDistance ?? 1 / abs(candidate)
+        // The renderer freezes geometry at the accepted live distance, which
+        // can legitimately differ slightly from the nominal search target.
+        let presentationDistance = distance
+        let presented = PresentedOptotypeGeometry.calculate(
+            distanceMetres: presentationDistance,
+            pixelsPerInch: 460,
+            nativeScale: 3,
+            presentationMode: .phonePOCLocator
+        )
+        let renderedAngle = presented?.geometry.effectiveArcMinutes
+        let actualAngle = presented?.computedArcMinutes(at: distance)
+        let drift = renderedAngle.flatMap { rendered in
+            actualAngle.map { abs($0 - rendered) / rendered }
         }
         return TrialBlock(
             eye: .right,
             candidateDiopter: candidate,
-            targetDistanceMetres: targetDistance ?? 1 / abs(candidate),
+            targetDistanceMetres: requestedTargetDistance,
             actualMedianDistanceMetres: distance,
             distanceStandardDeviation: 0.008,
             targets: targets,
@@ -406,7 +479,14 @@ final class ResultIntegrityValidatorTests: XCTestCase {
                 discardReasons: []
             ),
             responseSource: .voice,
-            transcript: nil
+            transcript: nil,
+            presentationDistanceMetres: includeGeometry ? presentationDistance : nil,
+            renderedPixelHeight: includeGeometry ? presented?.geometry.pixelHeight : nil,
+            renderedPointHeight: includeGeometry ? presented?.geometry.pointHeight : nil,
+            renderedAngularSizeArcMinutes: includeGeometry ? renderedAngle : nil,
+            actualAngularSizeArcMinutes: includeGeometry ? actualAngle : nil,
+            geometryDistanceDriftFraction: includeGeometry ? drift : nil,
+            presentedGeometry: includeGeometry && includePresentedGeometry ? presented : nil
         )
     }
 

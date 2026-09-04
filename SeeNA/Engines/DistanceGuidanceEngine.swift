@@ -55,8 +55,8 @@ enum DistanceGuidanceCue: Equatable, Hashable, Sendable {
             "Walk backwards slowly. I will tell you when to stop.",
             "Walk towards the phone. I will tell you when to stop.",
             "Stay where you are.",
-            "You are in position. Starting now. Seven rings. Say the openings from left to right.",
-            "You are in position. Starting now. Seven stripes. Say left or right, in order."
+            "You are in position. Starting now. \(SequentialOptotypeSession.requiredTargetCount) rings. Say the openings from left to right.",
+            "You are in position. Starting now. \(SequentialGaborSession.requiredTargetCount) stripes. Say left or right, in order."
         ]
         for steps in 1...6 {
             texts.append(moveBack(steps: steps).spokenText)
@@ -113,16 +113,23 @@ enum DistanceGuidanceEngine {
 struct RobustDistanceFilter: Sendable {
     private var values: [Double] = []
     private let windowSize: Int
+    private let maximumConsecutiveDropouts: Int
+    private var consecutiveDropouts = 0
 
-    init(windowSize: Int = 9) {
+    init(windowSize: Int = 9, maximumConsecutiveDropouts: Int = 6) {
         self.windowSize = max(5, min(15, windowSize))
+        self.maximumConsecutiveDropouts = max(0, min(30, maximumConsecutiveDropouts))
     }
 
     mutating func update(_ value: Double?) -> Double? {
         guard let value, value.isFinite, (0.20...3.0).contains(value) else {
-            values.removeAll(keepingCapacity: true)
+            consecutiveDropouts = min(maximumConsecutiveDropouts + 1, consecutiveDropouts + 1)
+            if consecutiveDropouts > maximumConsecutiveDropouts {
+                values.removeAll(keepingCapacity: true)
+            }
             return nil
         }
+        consecutiveDropouts = 0
         values.append(value)
         if values.count > windowSize {
             values.removeFirst(values.count - windowSize)
@@ -132,6 +139,7 @@ struct RobustDistanceFilter: Sendable {
 
     mutating func reset() {
         values.removeAll(keepingCapacity: true)
+        consecutiveDropouts = 0
     }
 }
 
@@ -147,12 +155,12 @@ struct DistanceTargetTracker: Sendable {
     private var activeTarget: Double?
     private var isInTargetZone = false
     private var stableDuration: TimeInterval = 0
-    private var outsideSince: TimeInterval?
+    private var violationSince: TimeInterval?
     private var lastTimestamp: TimeInterval?
     private let dropoutGrace: TimeInterval
 
-    init(dropoutGrace: TimeInterval = 0.30) {
-        self.dropoutGrace = dropoutGrace
+    init(dropoutGrace: TimeInterval = 0.45) {
+        self.dropoutGrace = max(0, dropoutGrace)
     }
 
     mutating func update(
@@ -164,32 +172,42 @@ struct DistanceTargetTracker: Sendable {
         if activeTarget.map({ abs($0 - target) > 0.001 }) != false {
             reset(for: target)
         }
-        guard conditionsReady, let distance, distance.isFinite else {
-            reset(for: target)
-            return .idle
-        }
-
-        let error = abs(distance - target)
+        let timestamp = timestamp.isFinite ? timestamp : (lastTimestamp ?? 0)
         let entryTolerance = DistanceGuidanceEngine.entryTolerance(for: target)
         let exitTolerance = DistanceGuidanceEngine.exitTolerance(for: target)
+        let validDistance = distance.flatMap { value in
+            value.isFinite && (0.20...3.0).contains(value) ? value : nil
+        }
 
         guard isInTargetZone else {
             lastTimestamp = timestamp
+            guard conditionsReady, let validDistance else { return .idle }
+            let error = abs(validDistance - target)
             guard error <= entryTolerance else { return .idle }
             isInTargetZone = true
             stableDuration = 0
-            outsideSince = nil
+            violationSince = nil
             return state(for: target)
         }
 
         let frameDuration = min(0.20, max(0, timestamp - (lastTimestamp ?? timestamp)))
         lastTimestamp = timestamp
-        if error <= exitTolerance {
-            outsideSince = nil
+        if let violationSince,
+           timestamp - violationSince >= dropoutGrace {
+            reset(for: target)
+            return .idle
+        }
+        if conditionsReady,
+           let validDistance,
+           abs(validDistance - target) <= exitTolerance {
+            violationSince = nil
+            // Recovery inside the hysteresis window continues the existing
+            // hold. The contribution is capped at 200 ms, while a gap lasting
+            // 450 ms still resets before this branch can run.
             stableDuration += frameDuration
         } else {
-            outsideSince = outsideSince ?? timestamp
-            if timestamp - (outsideSince ?? timestamp) > dropoutGrace {
+            violationSince = violationSince ?? timestamp
+            if timestamp - (violationSince ?? timestamp) >= dropoutGrace {
                 reset(for: target)
                 return .idle
             }
@@ -201,7 +219,7 @@ struct DistanceTargetTracker: Sendable {
         activeTarget = nil
         isInTargetZone = false
         stableDuration = 0
-        outsideSince = nil
+        violationSince = nil
         lastTimestamp = nil
     }
 
@@ -209,7 +227,7 @@ struct DistanceTargetTracker: Sendable {
         activeTarget = target
         isInTargetZone = false
         stableDuration = 0
-        outsideSince = nil
+        violationSince = nil
         lastTimestamp = nil
     }
 

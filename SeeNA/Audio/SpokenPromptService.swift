@@ -3,11 +3,7 @@ import AVFoundation
 @MainActor
 final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
     nonisolated static let transitionTimeoutNanoseconds: UInt64 = 8_000_000_000
-
-    private enum RequestKind {
-        case prompt
-        case navigation
-    }
+    nonisolated static let navigationTransitionSettleNanoseconds: UInt64 = 280_000_000
 
     private enum Delivery {
         case backendWithLocalFallback
@@ -18,8 +14,25 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         let id: UUID
         let text: String
         let language: String
-        let kind: RequestKind
+        let kind: SpeechChannelRequestKind
         let delivery: Delivery
+        let quietSettleNanoseconds: UInt64
+
+        init(
+            id: UUID,
+            text: String,
+            language: String,
+            kind: SpeechChannelRequestKind,
+            delivery: Delivery,
+            quietSettleNanoseconds: UInt64 = 0
+        ) {
+            self.id = id
+            self.text = text
+            self.language = language
+            self.kind = kind
+            self.delivery = delivery
+            self.quietSettleNanoseconds = quietSettleNanoseconds
+        }
 
         var navigationKey: String { "\(language)|\(text)" }
     }
@@ -55,6 +68,7 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
     private var requestWaiters: [UUID: CheckedContinuation<SpeechOutcome, Never>] = [:]
 
     private var preloadTasks: [String: Task<Data?, Never>] = [:]
+    private var pendingPreloads: [String: (text: String, language: String)] = [:]
     private var preloadBatchTask: Task<Void, Never>?
 
     init(backend: BackendClient) {
@@ -72,6 +86,19 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
             text: text,
             language: language,
             kind: .prompt,
+            delivery: .backendWithLocalFallback
+        ))
+    }
+
+    /// Starts an introductory positioning instruction. It is intentionally
+    /// distinct from ordinary narration so the accepted-position transition
+    /// can immediately replace it with "Stop" and the countdown.
+    func speakGuidanceIntro(_ text: String, language: String = "en-AU") {
+        replaceChannel(with: SpeechRequest(
+            id: UUID(),
+            text: text,
+            language: language,
+            kind: .guidanceIntro,
             delivery: .backendWithLocalFallback
         ))
     }
@@ -184,16 +211,18 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         ensureChannelWorker()
     }
 
-    /// Atomically closes movement guidance and discards any direction that has
-    /// not started. An already-spoken direction is allowed to finish, then this
-    /// prompt is the next and only voice on the audio channel.
+    /// Atomically closes movement guidance, hard-cancels a stale direction,
+    /// then leaves a short quiet boundary before the accepted-position prompt.
+    /// This prevents the last step instruction from overlapping or contradicting
+    /// the message that the user is now correctly positioned.
     func speakAfterNavigation(_ text: String, language: String = "en-AU") async -> SpeechOutcome {
         let request = SpeechRequest(
             id: UUID(),
             text: text,
             language: language,
             kind: .prompt,
-            delivery: .backendWithLocalFallback
+            delivery: .backendWithLocalFallback,
+            quietSettleNanoseconds: Self.navigationTransitionSettleNanoseconds
         )
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -204,12 +233,16 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
                 navigationEnabled = false
                 queuedNavigation = nil
 
-            // A cue that is already audible may finish naturally. A cue still
-            // waiting on network/rendering must never begin after the app has
-            // declared the position accepted.
-            if activeRequest?.kind == .navigation, activeOutput == nil {
-                cancelChannel(clearQueuedPrompts: false)
-            }
+                let navigationFinishedVeryRecently = channelWorker != nil
+                    && lastNavigationFinishedAt.map {
+                        Date().timeIntervalSince($0) < 1
+                    } == true
+                if GuidanceSpeechTransitionPolicy.shouldInterruptForAcceptedPosition(
+                    activeRequestKind: activeRequest?.kind,
+                    navigationFinishedVeryRecently: navigationFinishedVeryRecently
+                ) {
+                    cancelChannel(clearQueuedPrompts: true)
+                }
 
                 requestWaiters[request.id] = continuation
                 promptQueue.append(request)
@@ -325,6 +358,16 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         while !Task.isCancelled, generation == channelGeneration {
             guard let request = takeNextRequest() else { return }
             activeRequest = request
+            if request.quietSettleNanoseconds > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: request.quietSettleNanoseconds)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled,
+                      generation == channelGeneration,
+                      activeRequest?.id == request.id else { return }
+            }
             let outcome = await renderAndPlay(request, generation: generation)
 
             guard !Task.isCancelled, generation == channelGeneration else { return }
@@ -395,33 +438,38 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
     }
 
     private func preload(_ texts: [String], language: String) {
-        guard preloadBatchTask == nil else { return }
         var seen: Set<String> = []
-        let pending = texts.filter { text in
+        for text in texts {
             let key = cacheKey(text: text, language: language)
-            return seen.insert(key).inserted
-                && cache.object(forKey: key as NSString) == nil
-                && preloadTasks[key] == nil
+            guard seen.insert(key).inserted,
+                  cache.object(forKey: key as NSString) == nil,
+                  preloadTasks[key] == nil,
+                  pendingPreloads[key] == nil else { continue }
+            pendingPreloads[key] = (text, language)
         }
-        guard !pending.isEmpty else { return }
+        ensurePreloadWorker()
+    }
+
+    private func ensurePreloadWorker() {
+        guard preloadBatchTask == nil, !pendingPreloads.isEmpty else { return }
         preloadBatchTask = Task { [weak self] in
             guard let self else { return }
-            await runPreloadQueue(pending, language: language)
-            preloadBatchTask = nil
+            await runPreloadQueue()
+            preloadWorkerDidFinish()
         }
     }
 
-    private func runPreloadQueue(_ texts: [String], language: String) async {
+    private func runPreloadQueue() async {
         let batchSize = 4
-        for start in stride(from: 0, to: texts.count, by: batchSize) {
+        while !pendingPreloads.isEmpty {
             guard !Task.isCancelled else { return }
-            let batch = Array(texts[start..<min(texts.count, start + batchSize)])
+            let batch = Array(pendingPreloads.prefix(batchSize))
             var tasks: [(key: String, task: Task<Data?, Never>)] = []
-            for text in batch {
-                let key = cacheKey(text: text, language: language)
+            for (key, pending) in batch {
+                pendingPreloads[key] = nil
                 guard cache.object(forKey: key as NSString) == nil else { continue }
                 let task = Task { [backend] in
-                    try? await backend.speech(text: text, locale: language)
+                    try? await backend.speech(text: pending.text, locale: pending.language)
                 }
                 preloadTasks[key] = task
                 tasks.append((key, task))
@@ -435,6 +483,11 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         }
     }
 
+    private func preloadWorkerDidFinish() {
+        preloadBatchTask = nil
+        ensurePreloadWorker()
+    }
+
     private func audioData(for text: String, language: String) async -> Data? {
         let key = cacheKey(text: text, language: language)
         if let cached = cache.object(forKey: key as NSString) {
@@ -446,6 +499,7 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
             preloadTasks[key] = nil
             return data
         }
+        pendingPreloads[key] = nil
         let data = try? await backend.speech(text: text, locale: language)
         if let data { cache.setObject(data as NSData, forKey: key as NSString) }
         return data
@@ -487,6 +541,7 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
             }
             return outcome
         } catch {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             return .failed
         }
     }
@@ -496,6 +551,9 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
         language: String,
         request: SpeechRequest
     ) async -> SpeechOutcome {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? session.setActive(true)
         let utterance = Self.utterance(text: text, language: language)
         let token = UUID()
         return await withCheckedContinuation { continuation in
@@ -522,6 +580,7 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
             activeOutput = nil
             continuation.resume(returning: outcome)
         }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func cancelActiveOutput() {
@@ -536,6 +595,7 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
             synthesizer.stopSpeaking(at: .immediate)
             continuation.resume(returning: .cancelled)
         }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func cancelRequest(_ id: UUID) {
@@ -549,7 +609,7 @@ final class SpokenPromptService: NSObject, @preconcurrency AVSpeechSynthesizerDe
     private static func utterance(text: String, language: String) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = bestFemaleVoice(language: language)
-        utterance.rate = 0.56
+        utterance.rate = 0.57
         utterance.pitchMultiplier = 1.0
         utterance.volume = 1
         utterance.preUtteranceDelay = 0

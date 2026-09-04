@@ -4,18 +4,21 @@ struct WelcomeView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
+    @ScaledMetric(relativeTo: .largeTitle) private var brandSize = 58.0
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 Color.white.ignoresSafeArea()
 
-                ScrollView(showsIndicators: false) {
+                ScrollView(showsIndicators: dynamicTypeSize.isAccessibilitySize) {
                     VStack(spacing: dynamicTypeSize.isAccessibilitySize ? 18 : 28) {
                         Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 20 : 44)
 
                         Text("SeeNA")
-                            .font(.system(size: 58, weight: .bold, design: .rounded))
+                            .font(.system(size: min(brandSize, 88), weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                             .accessibilityAddTraits(.isHeader)
 
                         Text("A simple eye check")
@@ -25,12 +28,17 @@ struct WelcomeView: View {
 
                         TestBadgeGroup()
 
-                        Text("After Start, I’ll speak each step.\nYou can answer by voice.")
+                        Text("Tap Start. Then listen and answer out loud.")
                             .font(.body.weight(.medium))
                             .foregroundStyle(SEENATheme.secondaryInk)
                             .multilineTextAlignment(.center)
                             .lineSpacing(4)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        if dynamicTypeSize.isAccessibilitySize {
+                            welcomeActions(horizontalPadding: 0)
+                                .padding(.top, 8)
+                        }
 
                         Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 20 : 44)
                     }
@@ -42,28 +50,35 @@ struct WelcomeView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 12) {
-                Button("Start") { begin() }
-                    .buttonStyle(PrimaryActionStyle())
-                    .accessibilityHint("Starts spoken setup")
-
-                Text("Approximate screening · not a prescription")
-                    .font(.caption)
-                    .foregroundStyle(SEENATheme.secondaryInk)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button("Previous sessions") { session.navigate(to: .history) }
-                    .font(.body.weight(.semibold))
-                    .frame(minHeight: 44)
-                    .accessibilityHint("Shows saved sessions and privacy controls")
+            if !dynamicTypeSize.isAccessibilitySize {
+                welcomeActions(horizontalPadding: 24)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-            .background(Color.white)
         }
         .navigationBarBackButtonHidden()
+    }
+
+    private func welcomeActions(horizontalPadding: CGFloat) -> some View {
+        VStack(spacing: 12) {
+            Button("Start") { begin() }
+                .buttonStyle(PrimaryActionStyle())
+                .accessibilityHint("Starts spoken setup")
+
+            Text("Approximate screening · not a prescription")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(SEENATheme.secondaryInk)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Previous sessions") { session.navigate(to: .history) }
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+                .accessibilityHint("Shows saved sessions and privacy controls")
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .background(Color.white)
     }
 
     private func begin() {
@@ -100,6 +115,7 @@ private struct TestBadgeGroup: View {
 }
 
 private struct TestBadge: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let symbol: String
     let label: String
 
@@ -114,7 +130,15 @@ private struct TestBadge: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, minHeight: 48)
-        .background(Color.black.opacity(0.06), in: Capsule())
+        .background {
+            if dynamicTypeSize.isAccessibilitySize {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.black.opacity(0.06))
+            } else {
+                Capsule()
+                    .fill(Color.black.opacity(0.06))
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
     }

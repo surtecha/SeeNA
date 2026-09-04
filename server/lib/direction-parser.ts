@@ -33,8 +33,9 @@ const numberSynonyms: Readonly<Record<string, string>> = {
   two: "two"
 };
 
-const yesSynonyms = new Set(["yes", "yeah", "yep", "sure"]);
+const yesSynonyms = new Set(["yes", "yeah", "yep"]);
 const noSynonyms = new Set(["no", "nope", "nah"]);
+const eligibilityYesSynonyms = new Set(["yes", "yeah", "yep"]);
 
 // A deliberately small allow-list for natural single-answer speech. These
 // tokens add no competing direction or negation, so they can be ignored without
@@ -83,10 +84,12 @@ const notVisibleAllowedTokens = new Set([
   "all",
   "am",
   "anything",
+  "are",
   "at",
   "away",
   "barely",
   "because",
+  "but",
   "blur",
   "blurred",
   "blurry",
@@ -113,11 +116,14 @@ const notVisibleAllowedTokens = new Set([
   "enough",
   "faint",
   "far",
+  "for",
+  "from",
   "fuzzy",
   "gap",
   "hard",
   "hardly",
   "hazy",
+  "here",
   "i",
   "identify",
   "image",
@@ -138,6 +144,7 @@ const notVisibleAllowedTokens = new Set([
   "nothing",
   "one",
   "opening",
+  "orientation",
   "out",
   "pattern",
   "please",
@@ -147,11 +154,14 @@ const notVisibleAllowedTokens = new Set([
   "really",
   "s",
   "see",
+  "side",
   "shape",
   "sharp",
   "small",
   "sorry",
   "symbol",
+  "stripe",
+  "stripes",
   "t",
   "target",
   "tell",
@@ -168,7 +178,8 @@ const notVisibleAllowedTokens = new Set([
   "was",
   "wasn",
   "wasnt",
-  "well"
+  "well",
+  "which"
 ]);
 
 const compactNegativeTokens = new Set([
@@ -313,7 +324,7 @@ export function analyzeDirectionTranscript(text: string): {
   };
 }
 
-export type ChoiceSetID = "contrast" | "controls" | "readAloud" | "simplified";
+export type ChoiceSetID = "contrast" | "controls" | "readAloud" | "simplified" | "eligibility";
 
 export function parseChoice(text: string, choiceSetID: ChoiceSetID): string | null {
   const tokens = normalizedTokens(text);
@@ -340,6 +351,16 @@ export function parseChoice(text: string, choiceSetID: ChoiceSetID): string | nu
         return [];
       });
       return choices.length === 1 ? choices[0] ?? null : null;
+    }
+    case "eligibility": {
+      const hasApplyWord = normalized.some((token) => token === "apply" || token === "applies");
+      const positive = normalized.some((token) => eligibilityYesSynonyms.has(token))
+        || (hasApplyWord && normalized.some((token) => ["one", "something", "it"].includes(token)));
+      const negative = normalized.some((token) => noSynonyms.has(token))
+        || normalized.some((token) => token === "none" || token === "nothing" || token === "neither")
+        || (hasApplyWord && normalized.some((token) => compactNegativeTokens.has(token)));
+      if (positive === negative) return null;
+      return positive ? "yes" : "no";
     }
   }
 }

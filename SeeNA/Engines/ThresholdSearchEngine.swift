@@ -2,7 +2,9 @@ import Foundation
 
 struct ScreeningCandidate: Equatable, Sendable {
     let diopter: Double
-    var distanceMetres: Double { 1 / abs(diopter) }
+    var distanceMetres: Double {
+        RefractionEstimator.distanceMetres(forMyopicDiopter: diopter) ?? .nan
+    }
 }
 
 enum SearchStage: Equatable, Sendable {
@@ -20,42 +22,67 @@ enum SearchAction: Equatable, Sendable {
 struct ThresholdSearchEngine: Sendable {
     private enum Phase: Sendable {
         case coarse(index: Int)
-        case fine(lastFail: Double, firstPass: Double, firstPassActualDiopter: Double)
-        case confirm(lastFail: Double?, firstPass: Double, initialActualDiopter: Double, disagreements: Int)
+        case fine(lastFail: Double, firstPass: Double, firstPassActualDistanceMetres: Double)
+        case confirm(lastFail: Double?, firstPass: Double, initialActualDistanceMetres: Double, disagreements: Int)
         case confirmStrongBoundary(disagreements: Int)
         case completed
     }
 
-    // Begin at the closest supported distance so participants only move farther
-    // from the phone after demonstrating that they can resolve the target.
-    // Three large outward jumps minimise walking and stops. A bounded binary
-    // refinement then narrows the first pass/fail bracket to 0.25 D.
-    static let coarseCandidates = [-2.50, -1.25, -0.50]
+    // The active enlarged phone task is one complete, balanced block at the
+    // close 40 cm setup distance. Its score remains available in TrialBlock for
+    // answer review, but the active path deliberately does not interpret the
+    // score as a threshold, referral signal, or refractive measurement.
+    static let coarseCandidates = [-2.50]
+    static let maximumActivePhoneLocatorDistanceMetres = 0.40
+
+    // Keep the pre-existing range available only to a future approved
+    // five-arcminute protocol. Changing the practical phone journey must not
+    // silently redefine a separately validated protocol's range.
+    private static let validatedProtocolCoarseCandidates = [-2.50, -1.25, -0.50]
 
     let eye: Eye
+    private let protocolDescriptor: LandoltProtocolDescriptor
     private var phase: Phase = .coarse(index: 0)
     private var borderlineRepeats: [Double: Int] = [:]
     private var invalidRetries: [Double: Int] = [:]
-    /// The sensor-derived diopter for the nearest coarse candidate that most
-    /// recently passed. Fine refinement carries this value forward so the
-    /// final repeatability figure compares two real measured distances rather
-    /// than a nominal target distance.
-    private var actualDiopterForMostRecentPass: Double?
+    /// The measured distance for the nearest coarse candidate that most
+    /// recently passed. The active phone locator retains distance only as
+    /// navigation/search state; it never turns that distance into a refractive
+    /// result. A future approved clinical protocol may use two measured
+    /// distances to calculate a repeatability component.
+    private var actualDistanceForMostRecentPass: Double?
 
-    init(eye: Eye) {
+    init(
+        eye: Eye,
+        protocolDescriptor: LandoltProtocolDescriptor = .activePhoneLocator
+    ) {
         self.eye = eye
+        self.protocolDescriptor = protocolDescriptor
+    }
+
+    private var searchCandidates: [Double] {
+        protocolDescriptor.presentationMode == .phonePOCLocator
+            ? Self.coarseCandidates
+            : Self.validatedProtocolCoarseCandidates
+    }
+
+    private var isActivePhoneTask: Bool {
+        protocolDescriptor.presentationMode == .phonePOCLocator
     }
 
     var nextAction: SearchAction {
         switch phase {
         case .coarse(let index):
-            return .test(candidate: ScreeningCandidate(diopter: Self.coarseCandidates[index]), stage: .coarse)
+            return .test(candidate: ScreeningCandidate(diopter: searchCandidates[index]), stage: .coarse)
         case .fine(let lastFail, let firstPass, _):
             return .test(candidate: ScreeningCandidate(diopter: RefractionEstimator.roundedToQuarterDiopter((lastFail + firstPass) / 2)), stage: .fine)
         case .confirm(_, let firstPass, _, _):
             return .test(candidate: ScreeningCandidate(diopter: firstPass), stage: .confirmation)
         case .confirmStrongBoundary:
-            return .test(candidate: ScreeningCandidate(diopter: -2.50), stage: .boundaryConfirmation)
+            return .test(
+                candidate: ScreeningCandidate(diopter: searchCandidates[0]),
+                stage: .boundaryConfirmation
+            )
         case .completed:
             return .completed(unreliableResult())
         }
@@ -68,13 +95,32 @@ struct ThresholdSearchEngine: Sendable {
         }
         guard case .test(let requestedCandidate, _) = nextAction,
               block.candidateDiopter.isFinite,
+              block.candidateDiopter < 0,
               block.targetDistanceMetres.isFinite,
+              block.targetDistanceMetres > 0,
+              block.actualMedianDistanceMetres.isFinite,
+              block.actualMedianDistanceMetres > 0,
+              block.distanceStandardDeviation.isFinite,
+              block.distanceStandardDeviation >= 0,
+              block.distanceStandardDeviation < block.actualMedianDistanceMetres,
+              block.quality.trackingCoverage.isFinite,
+              (0...1).contains(block.quality.trackingCoverage),
+              block.quality.gazeCoverage.map({ $0.isFinite && (0...1).contains($0) }) != false,
               abs(block.candidateDiopter - requestedCandidate.diopter) <= 0.000_001,
-              abs(block.targetDistanceMetres - requestedCandidate.distanceMetres) <= 0.000_001 else {
+              abs(block.targetDistanceMetres - requestedCandidate.distanceMetres) <= 0.000_001,
+              !isActivePhoneTask ||
+                requestedCandidate.distanceMetres <= Self.maximumActivePhoneLocatorDistanceMetres + 0.000_001 else {
             phase = .completed
             return .completed(unreliableResult())
         }
-        guard block.quality.isValid, block.outcome != .invalid else {
+        guard block.quality.isValid,
+              block.quality.phoneStable,
+              block.quality.headPoseValid,
+              block.quality.distanceStable,
+              block.quality.audioLevelAdequate,
+              block.quality.targetGeometryValid,
+              block.outcome != .invalid,
+              blockHasCompleteBalancedEvidence(block) else {
             let count = invalidRetries[block.candidateDiopter, default: 0] + 1
             invalidRetries[block.candidateDiopter] = count
             if count > 2 {
@@ -83,6 +129,19 @@ struct ThresholdSearchEngine: Sendable {
             }
             return nextAction
         }
+
+        // One quality-valid block is the whole active task. Pass, borderline,
+        // and fail remain auditable score labels only; none changes the neutral
+        // completion status or creates a medical recommendation.
+        if isActivePhoneTask {
+            phase = .completed
+            return .completed(qualitativeResult(
+                status: .experimentalTaskCompleted,
+                action: .unavailable,
+                block: block
+            ))
+        }
+
         if block.outcome == .borderline {
             let count = borderlineRepeats[block.candidateDiopter, default: 0] + 1
             borderlineRepeats[block.candidateDiopter] = count
@@ -103,60 +162,77 @@ struct ThresholdSearchEngine: Sendable {
 
                 // The current, farther candidate is the first failure. The
                 // preceding, closer candidate is the nearest established pass.
+                guard let firstPassActualDistance = actualDistanceForMostRecentPass else {
+                    phase = .completed
+                    return .completed(unreliableResult())
+                }
                 phase = .fine(
-                    lastFail: Self.coarseCandidates[index],
-                    firstPass: Self.coarseCandidates[index - 1],
-                    firstPassActualDiopter: actualDiopterForMostRecentPass
-                        ?? Self.coarseCandidates[index - 1]
+                    lastFail: searchCandidates[index],
+                    firstPass: searchCandidates[index - 1],
+                    firstPassActualDistanceMetres: firstPassActualDistance
                 )
-            } else if index == Self.coarseCandidates.count - 1 {
+            } else if index == searchCandidates.count - 1 {
                 phase = .confirm(
                     lastFail: nil,
-                    firstPass: Self.coarseCandidates[index],
-                    initialActualDiopter: actualDiopter(block),
+                    firstPass: searchCandidates[index],
+                    initialActualDistanceMetres: block.actualMedianDistanceMetres,
                     disagreements: 0
                 )
             } else {
-                actualDiopterForMostRecentPass = actualDiopter(block)
+                actualDistanceForMostRecentPass = block.actualMedianDistanceMetres
                 phase = .coarse(index: index + 1)
             }
 
-        case .fine(let lastFail, let firstPass, let firstPassActualDiopter):
+        case .fine(let lastFail, let firstPass, let firstPassActualDistance):
             let tested = block.candidateDiopter
             let refinedLastFail = block.outcome == .fail ? tested : lastFail
             let refinedFirstPass = block.outcome == .pass ? tested : firstPass
-            let refinedFirstPassActual = block.outcome == .pass
-                ? actualDiopter(block)
-                : firstPassActualDiopter
+            let refinedFirstPassActualDistance = block.outcome == .pass
+                ? block.actualMedianDistanceMetres
+                : firstPassActualDistance
             if abs(refinedLastFail - refinedFirstPass) > 0.25 + 0.000_001 {
                 phase = .fine(
                     lastFail: refinedLastFail,
                     firstPass: refinedFirstPass,
-                    firstPassActualDiopter: refinedFirstPassActual
+                    firstPassActualDistanceMetres: refinedFirstPassActualDistance
                 )
             } else {
                 phase = .confirm(
                     lastFail: refinedLastFail,
                     firstPass: refinedFirstPass,
-                    initialActualDiopter: refinedFirstPassActual,
+                    initialActualDistanceMetres: refinedFirstPassActualDistance,
                     disagreements: 0
                 )
             }
 
-        case .confirm(let lastFail, let firstPass, let initialActualDiopter, let disagreements):
+        case .confirm(let lastFail, let firstPass, let initialActualDistance, let disagreements):
             guard block.outcome == .pass else {
                 if disagreements == 0 {
-                    phase = .confirm(lastFail: lastFail, firstPass: firstPass, initialActualDiopter: initialActualDiopter, disagreements: 1)
+                    phase = .confirm(
+                        lastFail: lastFail,
+                        firstPass: firstPass,
+                        initialActualDistanceMetres: initialActualDistance,
+                        disagreements: 1
+                    )
                     return nextAction
                 }
                 phase = .completed
                 return .completed(unreliableResult())
             }
             phase = .completed
-            if lastFail == nil, firstPass == -0.50 {
-                return .completed(boundaryResult(status: .noMyopiaDetectedWithinRange, block: block))
+            if lastFail == nil, firstPass == searchCandidates.last {
+                return .completed(completedBoundaryResult(
+                    numericStatus: .noMyopiaDetectedWithinRange,
+                    qualitativeStatus: .experimentalFarthestTargetPassed,
+                    block: block
+                ))
             }
-            return .completed(validResult(lastFail: lastFail, firstPass: firstPass, initialActualDiopter: initialActualDiopter, block: block))
+            return .completed(completedThresholdResult(
+                lastFail: lastFail,
+                firstPass: firstPass,
+                initialActualDistanceMetres: initialActualDistance,
+                block: block
+            ))
 
         case .confirmStrongBoundary(let disagreements):
             guard block.outcome == .fail else {
@@ -168,7 +244,11 @@ struct ThresholdSearchEngine: Sendable {
                 return .completed(unreliableResult())
             }
             phase = .completed
-            return .completed(boundaryResult(status: .strongerThanSupportedRange, block: block))
+            return .completed(completedBoundaryResult(
+                numericStatus: .strongerThanSupportedRange,
+                qualitativeStatus: .experimentalAdverseBoundary,
+                block: block
+            ))
 
         case .completed:
             return .completed(unreliableResult())
@@ -176,47 +256,142 @@ struct ThresholdSearchEngine: Sendable {
         return nextAction
     }
 
-    private func actualDiopter(_ block: TrialBlock) -> Double {
-        RefractionEstimator.diopter(forDistanceMetres: block.actualMedianDistanceMetres) ?? block.candidateDiopter
+    private func blockHasCompleteBalancedEvidence(_ block: TrialBlock) -> Bool {
+        guard SequentialOptotypeSession.isValidTargetSequence(block.targets),
+              block.responses.count == SequentialOptotypeSession.requiredTargetCount else {
+            return false
+        }
+        let correctCount = zip(block.targets, block.responses).reduce(into: 0) { count, pair in
+            if pair.1.matches(pair.0) { count += 1 }
+        }
+        return block.correctCount == correctCount &&
+            block.outcome == TrialScorer.outcome(
+                correctCount: correctCount,
+                responseCount: block.responses.count
+            )
     }
 
-    private func validResult(lastFail: Double?, firstPass: Double, initialActualDiopter: Double, block: TrialBlock) -> EyeScreeningResult {
-        let actual = actualDiopter(block)
+    /// Numeric construction is a separate, future-only branch. In particular,
+    /// `phonePOCLocator` short-circuits before any far-point conversion or
+    /// numeric `EyeScreeningResult` is constructed.
+    private var mayConstructValidatedNumericResult: Bool {
+        protocolDescriptor.presentationMode == .clinicalFiveArcMinute &&
+            NumericResultEligibility.protocolReleaseIsApproved(protocolDescriptor)
+    }
+
+    private func completedThresholdResult(
+        lastFail: Double?,
+        firstPass: Double,
+        initialActualDistanceMetres: Double,
+        block: TrialBlock
+    ) -> EyeScreeningResult {
+        guard mayConstructValidatedNumericResult else {
+            return qualitativeResult(
+                status: .experimentalThresholdObserved,
+                action: .professionalReviewRecommended,
+                block: block
+            )
+        }
+        return validatedNumericThresholdResult(
+            lastFail: lastFail,
+            firstPass: firstPass,
+            initialActualDistanceMetres: initialActualDistanceMetres,
+            block: block
+        )
+    }
+
+    private func validatedNumericThresholdResult(
+        lastFail: Double?,
+        firstPass: Double,
+        initialActualDistanceMetres: Double,
+        block: TrialBlock
+    ) -> EyeScreeningResult {
+        guard let actual = RefractionEstimator.diopter(
+                forDistanceMetres: block.actualMedianDistanceMetres
+              ),
+              let initialActual = RefractionEstimator.diopter(
+                forDistanceMetres: initialActualDistanceMetres
+              ),
+              let uncertainty = RefractionEstimator.sensorUncertainty(
+                distanceMetres: block.actualMedianDistanceMetres,
+                standardDeviationMetres: block.distanceStandardDeviation
+              ) else { return unreliableResult() }
         let display = RefractionEstimator.roundedToQuarterDiopter(actual)
-        return EyeScreeningResult(
+        guard display.isFinite else { return unreliableResult() }
+        let result = EyeScreeningResult(
             eye: eye,
             status: .validEstimate,
             lastFailDiopter: lastFail,
             firstPassDiopter: firstPass,
             displayedEstimateDiopter: display,
             thresholdDistanceMetres: block.actualMedianDistanceMetres,
-            sensorUncertaintyDiopter: RefractionEstimator.sensorUncertainty(
-                distanceMetres: block.actualMedianDistanceMetres,
-                standardDeviationMetres: block.distanceStandardDeviation
-            ),
-            repeatabilityDiopter: abs(initialActualDiopter - actual),
+            sensorUncertaintyDiopter: uncertainty,
+            repeatabilityDiopter: abs(initialActual - actual),
             trackingQuality: block.quality.trackingCoverage >= 0.95 ? .good : .moderate,
             responseConsistency: .good,
             warnings: baseWarnings(for: block)
         )
+        guard ResultIntegrityValidator.validate(result).isValid else { return unreliableResult() }
+        return result
     }
 
-    private func boundaryResult(status: ScreeningStatus, block: TrialBlock) -> EyeScreeningResult {
-        EyeScreeningResult(
+    private func completedBoundaryResult(
+        numericStatus: ScreeningStatus,
+        qualitativeStatus: ScreeningStatus,
+        block: TrialBlock
+    ) -> EyeScreeningResult {
+        guard mayConstructValidatedNumericResult else {
+            let action: ScreeningAction = qualitativeStatus == .experimentalFarthestTargetPassed
+                ? .routineExamRecommended
+                : .professionalReviewRecommended
+            return qualitativeResult(status: qualitativeStatus, action: action, block: block)
+        }
+        return validatedNumericBoundaryResult(status: numericStatus, block: block)
+    }
+
+    private func validatedNumericBoundaryResult(
+        status: ScreeningStatus,
+        block: TrialBlock
+    ) -> EyeScreeningResult {
+        guard let uncertainty = RefractionEstimator.sensorUncertainty(
+            distanceMetres: block.actualMedianDistanceMetres,
+            standardDeviationMetres: block.distanceStandardDeviation
+        ) else { return unreliableResult() }
+        let result = EyeScreeningResult(
             eye: eye,
             status: status,
-            lastFailDiopter: status == .strongerThanSupportedRange ? -2.50 : nil,
-            firstPassDiopter: status == .noMyopiaDetectedWithinRange ? -0.50 : nil,
+            lastFailDiopter: status == .strongerThanSupportedRange ? searchCandidates.first : nil,
+            firstPassDiopter: status == .noMyopiaDetectedWithinRange ? searchCandidates.last : nil,
             displayedEstimateDiopter: nil,
             thresholdDistanceMetres: block.actualMedianDistanceMetres,
-            sensorUncertaintyDiopter: RefractionEstimator.sensorUncertainty(
-                distanceMetres: block.actualMedianDistanceMetres,
-                standardDeviationMetres: block.distanceStandardDeviation
-            ),
+            sensorUncertaintyDiopter: uncertainty,
             repeatabilityDiopter: 0,
             trackingQuality: block.quality.trackingCoverage >= 0.95 ? .good : .moderate,
             responseConsistency: .good,
             warnings: baseWarnings(for: block)
+        )
+        guard ResultIntegrityValidator.validate(result).isValid else { return unreliableResult() }
+        return result
+    }
+
+    private func qualitativeResult(
+        status: ScreeningStatus,
+        action: ScreeningAction,
+        block: TrialBlock
+    ) -> EyeScreeningResult {
+        EyeScreeningResult(
+            eye: eye,
+            status: status,
+            lastFailDiopter: nil,
+            firstPassDiopter: nil,
+            displayedEstimateDiopter: nil,
+            thresholdDistanceMetres: nil,
+            sensorUncertaintyDiopter: nil,
+            repeatabilityDiopter: nil,
+            trackingQuality: block.quality.trackingCoverage >= 0.95 ? .good : .moderate,
+            responseConsistency: .good,
+            warnings: baseWarnings(for: block),
+            recommendedAction: action
         )
     }
 
