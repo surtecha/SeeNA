@@ -5,6 +5,7 @@ import Combine
 final class AppDependencies: ObservableObject {
     let profileRegistry: DeviceProfileRegistry
     let sessionStore: SessionStore
+    let refractionStore: RefractionStore
     let sensorCoordinator: SensorCoordinator
     let audioRecorder: AudioBlockRecorder
     let spokenPrompts: SpokenPromptService
@@ -20,7 +21,8 @@ final class AppDependencies: ObservableObject {
         spokenPrompts: SpokenPromptService,
         backend: BackendClient,
         network: NetworkReachabilityService,
-        brightness: BrightnessManager
+        brightness: BrightnessManager,
+        refractionStore: RefractionStore = RefractionStore()
     ) {
         self.profileRegistry = profileRegistry
         self.sessionStore = sessionStore
@@ -30,6 +32,7 @@ final class AppDependencies: ObservableObject {
         self.backend = backend
         self.network = network
         self.brightness = brightness
+        self.refractionStore = refractionStore
     }
 
     static func live() -> AppDependencies {
@@ -63,7 +66,8 @@ final class AppDependencies: ObservableObject {
             spokenPrompts: SpokenPromptService(backend: backend),
             backend: backend,
             network: NetworkReachabilityService(),
-            brightness: BrightnessManager(isEnabled: false)
+            brightness: BrightnessManager(isEnabled: false),
+            refractionStore: RefractionStore(inMemory: true)
         )
     }
 

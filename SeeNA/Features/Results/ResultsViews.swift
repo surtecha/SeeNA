@@ -306,6 +306,14 @@ struct ResultsView: View {
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .accessibilityAddTraits(.isHeader)
 
+                Label(model.screening.createdAt.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if session.persistenceState == .saved {
+                    Button { session.navigate(to: .history) } label: {
+                        Label("Saved with date · View history", systemImage: "checkmark.circle.fill")
+                    }.font(.callout.weight(.semibold)).frame(minHeight: 44)
+                }
+
                 if session.persistenceState == .volatile {
                     Label("Not saved — this result is available only on this screen", systemImage: "externaldrive.badge.exclamationmark")
                         .font(.body.weight(.semibold))
@@ -590,7 +598,7 @@ struct SessionHistoryView: View {
     var body: some View {
         List {
             Section {
-                Text("Saved only on this iPhone. Audio recordings are deleted after each response.")
+                Text("Saved on this iPhone. Voice recordings are not kept.")
                     .font(.body)
                     .foregroundStyle(SEENATheme.secondaryInk)
             }
@@ -643,7 +651,7 @@ struct SessionHistoryView: View {
 
             if !model.sessions.isEmpty {
                 Section {
-                    Button("Delete all sessions", role: .destructive) {
+                    Button("Delete all vision checks", role: .destructive) {
                         confirmingDeleteAll = true
                     }
                 }
@@ -659,7 +667,7 @@ struct SessionHistoryView: View {
             }
 
         }
-        .navigationTitle("Previous sessions")
+        .navigationTitle("Saved results")
         .task { await model.load() }
         .onChange(of: model.errorMessage) { _, errorMessage in
             guard let errorMessage else { return }
@@ -679,7 +687,7 @@ struct SessionHistoryView: View {
             Text("This removes the saved result and answers from this iPhone.")
         }
         .confirmationDialog(
-            "Delete every saved session?",
+            "Delete all saved vision checks?",
             isPresented: $confirmingDeleteAll,
             titleVisibility: .visible
         ) {

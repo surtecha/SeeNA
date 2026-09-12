@@ -89,10 +89,12 @@ struct ResultVerificationBadge: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.subheadline.weight(.bold))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(SEENATheme.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                if state == .reviewNeeded {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(SEENATheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(14)

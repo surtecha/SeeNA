@@ -94,9 +94,7 @@ struct RootView: View {
             )
         case .evidence: EvidenceView()
         case .history:
-            SessionHistoryView(
-                model: SessionHistoryViewModel(store: dependencies.sessionStore)
-            )
+            SavedResultsView()
         }
     }
 }

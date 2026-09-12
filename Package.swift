@@ -34,6 +34,7 @@ let package = Package(
                 "Models/DomainModels.swift",
                 "Networking/BackendClient.swift",
                 "Engines/AnswerWindowSensorEvidenceBuffer.swift",
+                "Engines/ExperimentalRefraction.swift",
                 "Engines/BlockMeasurementQuality.swift",
                 "Engines/DistanceGuidanceEngine.swift",
                 "Engines/FaceAlignmentEngine.swift",
@@ -48,7 +49,8 @@ let package = Package(
                 "Engines/SequentialOptotypeSession.swift",
                 "Engines/ThresholdSearchEngine.swift",
                 "Engines/VoiceCapturePolicy.swift",
-                "Persistence/SessionStore.swift"
+                "Persistence/SessionStore.swift",
+                "Persistence/RefractionStore.swift"
             ]
         ),
         .testTarget(

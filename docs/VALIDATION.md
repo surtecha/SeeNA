@@ -1,8 +1,12 @@
 # Validation protocol
 
-This document separates device-distance verification from clinical validation. Simulator results, Apple specifications, another model’s calibration, and a correct implementation of `D = -1 / d` are not evidence that the app can estimate refractive error. Numeric refractive output is disabled in the current release and remains disabled after this protocol.
+This document separates device-distance verification from clinical validation. Simulator results, Apple specifications, another model’s calibration, and a correct implementation of `D = -1 / d` do not establish clinical refraction accuracy. The fixed-distance task cannot output diopters. The separate experimental endpoint flow is specified in [Refraction research](REFRACTION_RESEARCH.md); its approximation is not a clinically validated prescription.
 
-The live phone journey uses one fixed 0.40 m position. The longer marks below exist only to characterize the sensor for engineering evidence and a possible future clinical protocol. They are not distances a participant is asked to use in the current flow.
+The voice-guided circle/pattern journey uses one fixed 0.40 m position. The separate experimental estimate uses helper-entered tape measurements from 0.40 to 2.00 m, not extrapolated ARKit readings. The sensor checks below apply to the circle/pattern journey, not a claim that the helper measurements have been verified.
+
+## Experimental endpoint checks
+
+Before physical use, verify the actual 200-point line, angular E dimensions, minimum stroke resolution, display brightness behaviour, eye occlusion and eye-to-screen tape readings on the exact iPhone. Interrupt a recording, change position, deny the microphone, enter an invalid measurement and cancel mid-countdown: none may score an answer or advance a target. Complete both eyes, save, relaunch, reopen answers and delete only the selected result. Confirm unsupported endpoints and disagreeing repeats return no number. These are physical engineering checks, not clinical comparison testing.
 
 ## Equipment and setup
 

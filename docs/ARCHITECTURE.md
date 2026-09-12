@@ -82,3 +82,11 @@ Gabor orientation is scored separately. Each eye receives one block of eight tar
 ## Persistence and privacy
 
 Completed sessions are encoded as schema-versioned JSON under Application Support with complete file protection and atomic writes. Stored data is limited to directions, responses, derived distances, quality decisions and result ranges. Raw video, frames, meshes, images, audio and biometric templates are not retained.
+
+## Experimental refraction and dated results
+
+`RefractionFlowView` delegates state to `RefractionViewModel`; `FarPointSearch` owns the deterministic endpoint search. `RefractionRecord` stores raw accepted evidence and recomputes each eye on read. `RefractionStore` is an injected actor with a separate versioned, atomically written, file-protected history. Saving is explicit, idempotent by session ID, dated and reversible by per-record deletion. Unreadable history is never silently overwritten. Preview storage is in-memory.
+
+The helper-operated flow uses a ruler-calibrated screen and entered tape readings, not the fixed-stand sensor gates. It has an independent eligibility screen and experimental limitation. It does not unlock the old fixed-distance numeric path. No refraction number is sent to an LLM for estimation or verification. See [the exact protocol and limitations](REFRACTION_RESEARCH.md).
+
+Refraction voice tasks use cancellation generations and await the previous task's audio cleanup before opening another recording. A helper answer cancels pending capture or transcription. Returning from the background requires re-entering position. A simulator-only, explicitly opt-in QA fixture exercises this flow with synthetic measurements; it is excluded from physical-device and Release builds.

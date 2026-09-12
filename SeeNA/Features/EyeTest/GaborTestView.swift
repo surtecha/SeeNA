@@ -30,10 +30,6 @@ struct GaborTestView: View {
                             .buttonStyle(SecondaryActionStyle())
                             .frame(minHeight: 44)
                     }
-                    Text("PATTERN TASK")
-                        .font(.caption.weight(.semibold))
-                        .tracking(0.7)
-                        .foregroundStyle(SEENATheme.secondaryInk)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: proxy.size.height)
@@ -200,10 +196,6 @@ struct GaborTestView: View {
                     }
                 }
                 .transition(.opacity)
-            } else {
-                Text("LEFT  OR  RIGHT")
-                    .font(.headline.weight(.bold))
-                    .tracking(1.5)
             }
         }
         .accessibilityElement(children: .ignore)

@@ -5,6 +5,8 @@ struct WelcomeView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var dependencies: AppDependencies
     @ScaledMetric(relativeTo: .largeTitle) private var brandSize = 58.0
+    @State private var presentedFlow: WelcomeFlow?
+    private enum WelcomeFlow: String, Identifiable { case refraction; var id: String { rawValue } }
 
     var body: some View {
         GeometryReader { proxy in
@@ -28,7 +30,7 @@ struct WelcomeView: View {
 
                         TestBadgeGroup()
 
-                        Text("Tap Start. Then listen and answer out loud.")
+                        Text("Listen. Answer. See your results.")
                             .font(.body.weight(.medium))
                             .foregroundStyle(SEENATheme.secondaryInk)
                             .multilineTextAlignment(.center)
@@ -55,6 +57,7 @@ struct WelcomeView: View {
             }
         }
         .navigationBarBackButtonHidden()
+        .fullScreenCover(item: $presentedFlow) { _ in RefractionFlowView() }
     }
 
     private func welcomeActions(horizontalPadding: CGFloat) -> some View {
@@ -63,13 +66,20 @@ struct WelcomeView: View {
                 .buttonStyle(PrimaryActionStyle())
                 .accessibilityHint("Starts spoken setup")
 
-            Text("Approximate screening · not a prescription")
+            Button("Eye-power estimate") {
+                dependencies.resetForNewScreening()
+                HapticFeedback.impact(.light)
+                presentedFlow = .refraction
+            }.buttonStyle(SecondaryActionStyle())
+                .accessibilityHint("Experimental measurement with a helper")
+
+            Text("Vision screening · not a prescription")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(SEENATheme.secondaryInk)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Button("Previous sessions") { session.navigate(to: .history) }
+            Button("Saved results") { session.navigate(to: .history) }
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
@@ -109,8 +119,8 @@ private struct TestBadgeGroup: View {
 
     @ViewBuilder
     private var badges: some View {
-        TestBadge(symbol: "circle.dotted", label: "Landolt C")
-        TestBadge(symbol: "circle.grid.cross", label: "Gabor pattern task")
+        TestBadge(symbol: "circle.dotted", label: "Circles")
+        TestBadge(symbol: "circle.grid.cross", label: "Patterns")
     }
 }
 
