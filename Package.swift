@@ -35,6 +35,7 @@ let package = Package(
                 "Networking/BackendClient.swift",
                 "Engines/AnswerWindowSensorEvidenceBuffer.swift",
                 "Engines/ExperimentalRefraction.swift",
+                "Engines/RefractionInteractionPolicy.swift",
                 "Engines/BlockMeasurementQuality.swift",
                 "Engines/DistanceGuidanceEngine.swift",
                 "Engines/FaceAlignmentEngine.swift",

@@ -27,3 +27,13 @@ Clinical comparison testing was explicitly excluded from this implementation req
 The launch film uses new recordings of the app. Basic checks use `-SEENA_USE_MOCK_SENSORS -SEENA_AUTOMATE_VOICE_RESPONSES`. The experimental flow uses `-SEENA_AUTOMATE_REFRACTION`, compiled only for Debug simulators. Recorded results are synthetic QA examples. Timing is edited for the product film and does not represent physical test duration.
 
 `scripts/RenderLaunchFilm.swift` composes an explicit JSON shot list into a silent 90-second video and creates the README GIF preview. `scripts/ScoreLaunchFilm.swift` adds original procedural music and transition effects, without external samples or speech, and verifies the final duration and audio-track count. `scripts/InspectLaunchMedia.swift` extracts selected frames and checks decoded audio for silence and sample clipping. The shorter animated preview is an index to the full film, not a second full-length video.
+
+## Interaction-quality follow-up
+
+- A single voice state now distinguishes preparation, listening and transcription. Listen cannot cancel an answer that is already being checked; a helper answer can deliberately replace it through the existing cancellation guard.
+- Retry clears stale errors. Completion from an old cancelled voice task cannot reset a newer task's state.
+- Opening the exit dialog pauses voice. A visible Keep measuring action returns to the same step; leaving during an active save is disabled.
+- Estimate history shows loading instead of a premature empty state, serialises load/delete interactions, supports refresh and announces errors to VoiceOver.
+- All 208 Swift tests passed after the final change. Four new tests cover the pure interaction policy and source wiring; the latter are not microphone simulations.
+- Final Debug and Release iOS simulator builds passed without warnings. Release UI checks covered dated history reopening, pausing while entering the exit dialog, and the explicit Keep measuring action retaining screen setup.
+- No optical formula or eligibility rule changed in this follow-up. End-to-end real-microphone reliability and physical sensing remain unverified; the processing label is covered by policy/wiring checks, not a new live spoken-answer trial.

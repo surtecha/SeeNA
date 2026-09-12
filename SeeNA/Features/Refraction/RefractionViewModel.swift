@@ -13,8 +13,9 @@ final class RefractionViewModel: ObservableObject {
     @Published private(set) var targets: [OptotypeDirection] = []
     @Published private(set) var answers: [OptotypeResponse] = []
     @Published private(set) var targetPoints: Double = 0
-    @Published private(set) var listening = false
-    @Published private(set) var speaking = false
+    @Published private(set) var voiceState: RefractionVoiceState = .idle
+    var listening: Bool { voiceState == .listening }
+    var speaking: Bool { voiceState == .speaking }
     @Published private(set) var message: String?
     @Published private(set) var record: RefractionRecord?
     @Published private(set) var saved = false
@@ -81,7 +82,7 @@ final class RefractionViewModel: ObservableObject {
     }
 
     func submit(_ response: OptotypeResponse, using dependencies: AppDependencies) {
-        guard phase == .answering, currentTarget != nil, !speaking else { return }
+        guard phase == .answering, currentTarget != nil, voiceState.canAcceptHelperAnswer else { return }
         stopVoice(using: dependencies)
         answers.append(response)
         HapticFeedback.selection()
@@ -126,25 +127,36 @@ final class RefractionViewModel: ObservableObject {
         // Retain the task until its replacement can await recorder cleanup.
         dependencies.audioRecorder.stop()
         dependencies.spokenPrompts.stop()
-        listening = false
-        speaking = false
+        voiceState = .idle
+    }
+
+    func pauseForExit(using dependencies: AppDependencies) {
+        stopVoice(using: dependencies)
+        if phase == .answering {
+            message = "Paused. Tap Listen to continue, or ask your helper to enter the answer."
+        }
     }
 
     func startVoice(using dependencies: AppDependencies, countdown: Bool = false) {
-        guard phase == .answering else { return }
+        guard phase == .answering, voiceState.canStartListening else { return }
         let previousTask = voiceTask
         stopVoice(using: dependencies)
         let token = generation
         let index = answers.count
-        speaking = countdown
+        message = nil
+        voiceState = countdown ? .speaking : .listening
         voiceTask = Task { [weak self] in
             guard let self else { return }
             // Await cancellation cleanup before reusing the shared audio session.
             await previousTask?.value
             guard token == generation, !Task.isCancelled else { return }
+            defer {
+                // An obsolete task must never clear a newer capture's state.
+                if token == generation { voiceState = .idle }
+            }
 #if DEBUG && targetEnvironment(simulator)
             if SimulatorRefractionAutomation.enabled {
-                speaking = false
+                voiceState = .listening
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 guard token == generation, let response = SimulatorRefractionAutomation.response(model: self) else { return }
                 submit(response, using: dependencies)
@@ -158,27 +170,29 @@ final class RefractionViewModel: ObservableObject {
                     )
                     guard token == generation, !Task.isCancelled else { return }
                     guard outcome == .finished else {
-                        speaking = false; message = "Guide paused. Tap Listen, or use the helper controls."; return
+                        message = "Guide paused. Tap Listen, or use the helper controls."; return
                     }
                     introducedTarget = true
                 }
                 for word in ["Three", "Two", "One", "Start"] {
                     let spoken = await dependencies.spokenPrompts.speakLocallyAndWait(word)
                     guard token == generation, !Task.isCancelled else { return }
-                    guard spoken == .finished else { speaking = false; return }
+                    guard spoken == .finished else {
+                        message = "Guide paused. Tap Listen to continue."; return
+                    }
                     if word != "Start" { try? await Task.sleep(for: .milliseconds(350)) }
                 }
-                speaking = false
+                voiceState = .listening
             }
             do {
-                listening = true
+                voiceState = .listening
                 let capture = try await dependencies.audioRecorder.record(maximumDuration: 20)
                 defer { dependencies.audioRecorder.cleanup(url: capture.fileURL) }
                 guard token == generation, !Task.isCancelled else { return }
-                listening = false
                 guard capture.adequateLevel else {
                     message = "I didn’t catch a complete answer. Tap Listen, or ask your helper to enter it."; return
                 }
+                voiceState = .processing
                 let response = try await dependencies.backend.transcribe(audioURL: capture.fileURL,
                     mode: .singleDirection, phraseID: "landolt-single")
                 guard token == generation, !Task.isCancelled, phase == .answering, answers.count == index else { return }
@@ -188,7 +202,6 @@ final class RefractionViewModel: ObservableObject {
                 submit(answer, using: dependencies)
             } catch {
                 guard token == generation, !Task.isCancelled else { return }
-                listening = false
                 message = "Voice is unavailable. Your helper can tap the answer below."
             }
         }

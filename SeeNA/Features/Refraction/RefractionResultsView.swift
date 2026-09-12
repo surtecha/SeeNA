@@ -64,14 +64,29 @@ struct RefractionResultContent: View {
 final class RefractionHistoryViewModel: ObservableObject {
     @Published private(set) var records: [RefractionRecord] = []
     @Published private(set) var error: String?
+    @Published private(set) var loading = true
+    @Published private(set) var deleting = false
+    private var loadInProgress = false
     private let store: RefractionStore
     init(store: RefractionStore) { self.store = store }
     func load() async {
-        do { records = try await store.load(); error = nil }
+        guard !loadInProgress, !deleting else { return }
+        loadInProgress = true
+        loading = true
+        defer { loading = false; loadInProgress = false }
+        do {
+            let loaded = try await store.load()
+            guard !Task.isCancelled else { return }
+            records = loaded; error = nil
+        }
+        catch is CancellationError { return }
         catch { self.error = "Could not open saved results. Nothing was deleted." }
     }
     func delete(_ id: UUID) async {
-        do { try await store.delete(id); await load() }
+        guard !loadInProgress, !deleting else { return }
+        deleting = true
+        defer { deleting = false }
+        do { try await store.delete(id); records = try await store.load(); error = nil }
         catch { self.error = "Could not delete this result. Try again." }
     }
 }
@@ -82,8 +97,16 @@ struct RefractionHistoryView: View {
     init(store: RefractionStore) { _model = StateObject(wrappedValue: RefractionHistoryViewModel(store: store)) }
     var body: some View {
         List {
-            if let error = model.error { Section { Text(error); Button("Try again") { Task { await model.load() } } } }
-            if model.records.isEmpty, model.error == nil {
+            if let error = model.error {
+                Section("Needs attention") {
+                    Text(error).accessibilityLabel("History error. " + error)
+                    Button("Try again") { Task { await model.load() } }.disabled(model.loading || model.deleting)
+                }
+            }
+            if model.loading, model.records.isEmpty {
+                ProgressView("Opening saved results").frame(maxWidth: .infinity).padding(.vertical, 24)
+            }
+            if model.records.isEmpty, model.error == nil, !model.loading {
                 ContentUnavailableView("No estimates saved", systemImage: "calendar.badge.plus",
                     description: Text("Save a result after your measurement."))
             }
@@ -98,11 +121,18 @@ struct RefractionHistoryView: View {
                         Text("Left: \(record.outcome(for: .left).shortDescription)")
                     }.font(.subheadline).padding(.vertical, 6)
                 }
-                .swipeActions { Button("Delete", role: .destructive) { pendingDelete = record.id } }
+                .swipeActions {
+                    Button("Delete", role: .destructive) { pendingDelete = record.id }
+                        .disabled(model.loading || model.deleting)
+                }
             }
             Section { Text("Experimental estimates · Stored on this iPhone").font(.caption).foregroundStyle(.secondary) }
         }
         .task { await model.load() }
+        .refreshable { await model.load() }
+        .onChange(of: model.error) { _, error in
+            if let error { UIAccessibility.post(notification: .announcement, argument: error) }
+        }
         .alert("Delete this result?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
             Button("Cancel", role: .cancel) { pendingDelete = nil }
             Button("Delete", role: .destructive) {

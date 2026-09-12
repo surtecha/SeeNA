@@ -221,7 +221,7 @@ npm run check
 
 Latest local verification, 12 September 2026:
 
-- 204 Swift tests covering measurement logic, answer evidence, voice policy, persistence and HTTP retry behaviour, including 199 synthetic endpoint threshold cases within one sweep test
+- 208 Swift tests covering measurement logic, answer evidence, voice policy, persistence and HTTP retry behaviour, including 199 synthetic endpoint threshold cases within one sweep test
 - 32 backend contract and safety tests in CI; the live Luna check is from the preceding verification
 - Debug and Release iOS 26 builds
 - Both-eye simulator journeys, answer review, explicit estimate saving and reopening the dated record in Release

@@ -30,12 +30,13 @@ struct RefractionFlowView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close", systemImage: "xmark") {
                         if model.phase == .introduction || model.saved { dismiss() }
-                        else { confirmExit = true }
-                    }.labelStyle(.iconOnly)
+                        else { model.pauseForExit(using: dependencies); confirmExit = true }
+                    }.labelStyle(.iconOnly).disabled(model.saving)
                 }
                 ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { inputFocused = false } }
             }
             .confirmationDialog("Leave this measurement?", isPresented: $confirmExit, titleVisibility: .visible) {
+                Button("Keep measuring") { confirmExit = false }
                 Button("Leave without saving", role: .destructive) { dismiss() }
             } message: { Text("Unsaved answers will be lost.") }
         }
@@ -109,11 +110,12 @@ struct RefractionFlowView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Direction target. Say where the three arms point.")
             HStack {
-                Image(systemName: model.listening ? "waveform" : "mic")
-                Text(model.listening ? "Listening" : model.speaking ? "Get ready" : "Your answer")
+                if model.voiceState == .processing { ProgressView().controlSize(.small) }
+                else { Image(systemName: model.listening ? "waveform" : "mic") }
+                Text(model.voiceState.label)
                 Spacer()
                 Button("Listen") { model.startVoice(using: dependencies) }
-                    .disabled(model.speaking || model.listening)
+                    .disabled(!model.voiceState.canStartListening)
             }.font(.callout.weight(.semibold))
             Text("Say a direction, or ask your helper to tap it.").font(.caption).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
