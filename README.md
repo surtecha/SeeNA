@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="docs/assets/SeeNA-Product-Walkthrough.mp4">
+  <a href="docs/assets/SeeNA-Launch-90s.mp4">
     <img src="docs/assets/seena-hero.png" alt="SeeNA on iPhone, showing a Landolt C screening target" width="100%">
   </a>
 </p>
@@ -9,7 +9,7 @@
 <p align="center"><strong>See Now and Always</strong></p>
 
 <p align="center">
-  A voice-guided iPhone experience that makes vision screening feel simple, private, and approachable.
+  A calmer first step towards understanding your vision. Guided by voice. Saved for later.
 </p>
 
 <p align="center">
@@ -20,23 +20,25 @@
   <img alt="Voice guided" src="https://img.shields.io/badge/Experience-Voice_Guided-000000?style=flat-square">
 </p>
 
-SeeNA turns an iPhone into a guided vision screening companion. Open the app to a calm, silent welcome, press Start, and follow natural spoken guidance. SeeNA helps the user reach 40 cm, presents one clear target at a time, listens for each answer, and explains the completed tasks in plain language.
+SeeNA turns an iPhone into a guided vision screening companion. Press **Start**, settle into position and answer out loud. One target. One question. Time to respond. At the end, see what you answered and return to your dated results whenever you need them.
+
+For people exploring short sight, a separate **Eye-power estimate** experience adds a helper-assisted measurement using a ruler, a measuring tape and repeated clarity checks. It can show an experimental approximation when the readings support one, and asks for a repeat when they do not. It is not a prescription.
 
 The experience is designed for people who may not be wearing their glasses, may not be comfortable with technology, or may find conventional eye charts difficult to use alone. It is especially mindful of older people and communities where reaching routine eye care may involve distance, travel, cost, or help from someone else.
 
 ## Watch SeeNA in action
 
 <p align="center">
-  <a href="docs/assets/SeeNA-Product-Walkthrough.mp4">
-    <img src="docs/assets/SeeNA-Product-Walkthrough.gif" alt="SeeNA product walkthrough from launch to answer review" width="360">
+  <a href="docs/assets/SeeNA-Launch-90s.mp4">
+    <img src="docs/assets/SeeNA-Launch-Preview.gif" alt="SeeNA launch film showing the app, voice-led checks and dated results" width="100%">
   </a>
 </p>
 
 <p align="center">
-  <strong><a href="docs/assets/SeeNA-Product-Walkthrough.mp4">Watch the complete 60-second product walkthrough</a></strong>
+  <strong><a href="docs/assets/SeeNA-Launch-90s.mp4">Watch SeeNA in 90 seconds</a></strong>
 </p>
 
-See the complete experience from launch and positioning through both screening tasks, results, and answer review.
+From a quiet welcome to one-at-a-time checks, an experimental estimate and saved results. The film uses the actual app interface with controlled simulator responses and edited timing. It demonstrates the experience, not a person's measured eye power or the duration of a complete physical measurement.
 
 ## Why SeeNA
 
@@ -51,6 +53,8 @@ SeeNA begins with something far more accessible: the iPhone already in a person�
 - Natural responses such as “left,” “up,” or “I cannot see it” are accepted.
 - Short prompts, haptics, and subtle motion keep the experience calm and understandable.
 - Each eye is screened independently through eight Landolt C targets and eight Gabor targets, with a complete answer review at the end.
+- Dated results stay on the iPhone, with answer details and individual deletion.
+- A separate helper-assisted mode explores approximate myopia without pretending that a circle-task score is a prescription.
 
 ## The experience
 
@@ -61,6 +65,7 @@ SeeNA begins with something far more accessible: the iPhone already in a person�
 5. **Complete the Landolt C task.** Say the direction of each circle opening. SeeNA waits for an accepted answer before changing the target.
 6. **Complete the Gabor task.** Identify each pattern orientation using the same one target, one answer rhythm.
 7. **Review the session.** SeeNA presents both eyes clearly, gives a carefully bounded plain-language explanation, and lets the user compare every correct answer with the response that was heard.
+8. **Come back later.** Open Saved results to find previous vision checks by date. Experimental estimates have their own tab and an explicit Save result action.
 
 <table>
   <tr>
@@ -71,6 +76,26 @@ SeeNA begins with something far more accessible: the iPhone already in a person�
     <td align="center"><img src="docs/assets/screens/05-answer-review.jpg" alt="SeeNA answer review" width="180"><br><sub>Answer review</sub></td>
   </tr>
 </table>
+
+## A separate path to an approximate estimate
+
+Choose **Eye-power estimate** from the welcome screen. Stay seated while a helper operates the phone.
+
+1. **Set the screen scale.** Measure the on-screen line with a ruler.
+2. **Measure the distance.** The helper places the phone between 40 cm and 2 m and enters the actual eye-to-screen tape reading.
+3. **Find the clarity boundary.** Identify the direction of one small E at a time, or say that it is not visible. The helper repositions the phone between levels.
+4. **Repeat for consistency.** Three independent searches run for each eye. Unbounded or inconsistent readings produce no number.
+5. **Save the result.** Keep the date, observed range and every accepted answer together, locally on the iPhone.
+
+Unlike the large circle and pattern tasks, these targets maintain a fixed visual angle. Enlarging them for easier recognition would change the measurement. This mode needs a helper and physical measurements; it is not the hands-free, fixed-distance journey.
+
+**The estimate is experimental and has not been clinically validated.** It is intended for adults with known short sight within the supported range. It does not measure astigmatism or long sight, cannot rule out eye disease and must not be used to buy glasses or contacts. Read [how the protocol works](docs/REFRACTION_RESEARCH.md).
+
+<p align="center">
+  <img src="docs/assets/screens/06-eye-power.jpg" alt="Experimental estimate with observed bounds and a Save result action" width="240">
+  <img src="docs/assets/screens/07-estimate-answers.jpg" alt="Every target and accepted response retained for review" width="240">
+  <img src="docs/assets/screens/08-saved-results.jpg" alt="Eye-power history organised by date" width="240">
+</p>
 
 ## How the screening works
 
@@ -86,7 +111,7 @@ At the same fixed 40 cm distance, the second task presents eight large striped p
 
 The front TrueDepth camera estimates eye-to-screen distance while Core Motion checks that the phone is still. SeeNA filters outliers and uses a rolling median so brief natural movement does not constantly reset the experience. Distance, face count, lighting, head pose, stillness, response timing, and answer quality feed deterministic evidence checks that decide whether a task response can be kept or should be repeated.
 
-The current release reports qualitative task outcomes and an answer audit for each eye. It does not show diopters, calculate a prescription, diagnose an eye condition, or replace an examination by an eye care professional.
+The circle/pattern journey reports task outcomes and an answer audit, not diopters. The separate experimental mode converts repeated clarity boundaries using inverse-distance geometry. Its observed range includes a tape-reading allowance, not the full uncertainty of clinical refraction. Neither mode diagnoses an eye condition or replaces an eye examination.
 
 ## Technical architecture
 
@@ -102,6 +127,9 @@ flowchart LR
         Session[AppSession and feature view models] --> Quality
         Session --> Tasks
         Store[Protected local session store] <--> Session
+        Helper[Ruler and tape readings] --> Endpoint[Repeated Tumbling E search]
+        Endpoint --> Estimate[Experimental approximation<br/>and observed bounds]
+        Estimate --> History[Dated local results<br/>and answer evidence]
     end
 
     subgraph Service[Bounded language service]
@@ -122,12 +150,12 @@ flowchart LR
 | MVVM | Feature focused view models isolate onboarding, permissions, readiness, screening, results, and history |
 | AppSession | Owns navigation, the active screening session, sensor presentation state, and explanation state |
 | ARKit and Core Motion | Estimate eye distance, head pose, gaze coverage, face count, and phone stillness |
-| Rendering and scoring | Draw pixel-aligned targets and calculate qualitative task outcomes with deterministic local code |
-| Protected storage | Saves schema versioned sessions atomically on device with complete file protection |
+| Rendering and scoring | Draw task targets, run the separate fixed-angle E search, and recompute results from retained evidence |
+| Protected storage | Saves dated, schema-versioned records atomically on device with complete file protection |
 | TypeScript service | Runs narrow request-checked endpoints for speech, transcription, and qualitative explanation |
 | OpenAI | Transcribes bounded answers and returns schema constrained explanations from allow-listed qualitative facts with `store: false` and no tools |
 
-The language model cannot create, change, or render a score. A response is shown only when it passes local schema, number, terminology, and meaning checks. If the service is unavailable or a response fails those checks, local scoring and deterministic result wording remain available.
+The language model cannot create or change a score or a refraction estimate. An explanation is shown only when it passes local schema, number, terminology, and meaning checks. Experimental estimates use local explanations only; no AI verification is presented as medical validation. If the service is unavailable, helper answer controls and deterministic result wording remain available.
 
 ## Trust and privacy
 
@@ -135,6 +163,7 @@ The language model cannot create, change, or render a score. A response is shown
 - Task measurements and answer evidence remain on the iPhone.
 - Only bounded response audio and allow-listed qualitative result facts can cross the backend boundary.
 - Sessions are written atomically to protected local storage and can be deleted in the app.
+- Saving an experimental estimate is an explicit choice. Its timestamp and answers remain together when reopened.
 - The OpenAI API key remains server side and is never bundled into the iOS application.
 - Remote responses use strict schemas, bounded inputs, rate limits, local safety checks, and deterministic fallbacks.
 
@@ -158,7 +187,7 @@ scripts/     Local configuration and media tooling
 - iOS 26 or later
 - A physical Face ID iPhone for TrueDepth, motion, microphone, and distance testing
 
-The final iOS 26.5 smoke matrix covers every iPhone 14, 15, 16, and 17 size class available in Xcode, including base, Plus, Pro, Pro Max, and iPhone Air. The simulator supports interface and fallback testing. Physical sensor behavior requires a real iPhone.
+A previous iOS 26.5 smoke matrix covered iPhone 14 through 17 and iPhone Air simulator size classes. The latest verification below is narrower. The simulator supports interface and fallback testing; physical sensing and ruler calibration require a real iPhone. The experimental estimate additionally needs a helper, ruler and measuring tape.
 
 ### Open the app
 
@@ -192,9 +221,13 @@ npm run check
 
 Latest local verification, 12 September 2026:
 
-- 191 Swift tests covering measurement logic, answer evidence, voice policy, persistence and HTTP retry behaviour
-- 32 backend contract and safety tests, plus a live Luna response check
+- 204 Swift tests covering measurement logic, answer evidence, voice policy, persistence and HTTP retry behaviour, including 199 synthetic endpoint threshold cases within one sweep test
+- 32 backend contract and safety tests in CI; the live Luna check is from the preceding verification
 - Debug and Release iOS 26 builds
+- Both-eye simulator journeys, answer review, explicit estimate saving and reopening the dated record in Release
+- Welcome and saved estimates checked at the largest accessibility text setting
+
+[App implementation CI: passed](https://github.com/surtecha/SeeNA/actions/runs/34677353733). See [release evidence](docs/RELEASE_CHECKS_2026-09-12.md) for the exact scope.
 
 The preceding release also passed a 16 of 16 simulator launch matrix across iPhone 14 through iPhone 17 and iPhone Air, and signed installation on a physical iPhone 16. Those are historical checks, not evidence that the latest changes have completed physical sensor and microphone testing. The current candidate still needs the [physical validation checks](docs/VALIDATION.md).
 
@@ -230,11 +263,11 @@ Continuous integration runs Swift tests, Debug and Release iOS builds, backend c
 
 ## Validation boundary
 
-SeeNA is built to fail safely. Simulator success cannot prove TrueDepth distance accuracy, microphone acoustics, or physical calibration. Numeric refractive output is disabled in the current release by a protocol-level lock. Exact-device calibration alone is not enough to enable it. A future numeric feature would require a separately approved, clinically validated protocol and supporting evidence, as described in [docs/VALIDATION.md](docs/VALIDATION.md).
+SeeNA is built to reject unsupported results. Simulator success cannot prove TrueDepth distance accuracy, microphone acoustics, or physical calibration. The fixed-distance circle/pattern tasks retain their numeric-output lock. The independent experimental endpoint protocol can produce an approximation, but agreement with clinician refraction has not been measured. Engineering checks prove code behaviour, not clinical accuracy.
 
 Published phone-based refraction methods are discussed in the [refraction research review](docs/REFRACTION_RESEARCH.md). They use different measurement protocols and do not establish the accuracy of SeeNA's current tasks.
 
-The current product is a non-diagnostic, qualitative vision task. It does not assess every refractive condition or eye disease, cannot rule out a vision problem, and is not a substitute for professional eye care.
+Clinical comparison testing is not included in this build. The app does not assess every refractive condition or eye disease, cannot rule out a vision problem, and is not a substitute for professional eye care.
 
 ## Team
 

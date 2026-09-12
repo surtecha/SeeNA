@@ -1,0 +1,14 @@
+{
+  "audioTracks" : 1,
+  "bytes" : 12254330,
+  "durationSeconds" : 90,
+  "fps" : 30,
+  "height" : 1080,
+  "provenance" : "Actual SeeNA simulator recordings; synthetic QA responses and edited timing, not clinical evidence.",
+  "sha256" : "6fb905a338b5c63178eee2475e4bcd3b113d6f4f1a7f06074e61541444d94d9d",
+  "soundtrack" : "Original procedural instrumental and chapter-synchronised effects; no external samples.",
+  "sourceAudioPeakDBFS" : -3,
+  "sourceAudioRMSDBFS" : -18.194761102211196,
+  "voiceover" : false,
+  "width" : 1920
+}
