@@ -80,13 +80,25 @@ final class VoiceCapturePolicyTests: XCTestCase {
         XCTAssertTrue(detector.capturedPlausibleSpeech)
 
         XCTAssertEqual(
-            detector.observe(averagePowerDB: -37, peakPowerDB: -24, elapsed: 3.39),
+            detector.observe(averagePowerDB: -37, peakPowerDB: -24, elapsed: 12.19),
             .keepRecording
         )
         XCTAssertEqual(
-            detector.observe(averagePowerDB: -37, peakPowerDB: -24, elapsed: 3.41),
-            .stop(.answerFinished)
+            detector.observe(averagePowerDB: -37, peakPowerDB: -24, elapsed: 12.21),
+            .stop(.durationLimit)
         )
+    }
+
+    func testLongNaturalPhraseWaitsForSilenceInsteadOfCuttingAtThreeSeconds() {
+        var detector = VoiceActivityDetector()
+        for index in 0..<65 {
+            XCTAssertEqual(detector.observe(
+                averagePowerDB: -37, peakPowerDB: -24, elapsed: Double(index) / 10
+            ), .keepRecording)
+        }
+        XCTAssertEqual(detector.observe(
+            averagePowerDB: -80, peakPowerDB: -75, elapsed: 7.2
+        ), .stop(.answerFinished))
     }
 
     func testNonFiniteMeterValuesAreSafe() {

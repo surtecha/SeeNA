@@ -1,32 +1,6 @@
 import Combine
 import Foundation
 
-/// Retains the complete, ordered sensor record for a scored answer block.
-///
-/// The old rolling window silently discarded early answers once more than 280
-/// frames arrived. This buffer never evicts accepted evidence. Its generous
-/// hard limit only protects the app from an indefinitely stalled capture; if
-/// reached, the block fails closed instead of being scored from partial data.
-struct AnswerWindowSensorEvidenceBuffer {
-    static let maximumRetainedSampleCount = 16_384
-
-    private(set) var samples: [DistanceSample] = []
-    private(set) var didExceedCapacity = false
-
-    mutating func record(_ sample: DistanceSample) {
-        guard samples.count < Self.maximumRetainedSampleCount else {
-            didExceedCapacity = true
-            return
-        }
-        samples.append(sample)
-    }
-
-    mutating func reset(releasingCapacity: Bool = false) {
-        samples.removeAll(keepingCapacity: !releasingCapacity)
-        didExceedCapacity = false
-    }
-}
-
 enum EyeTestPhase: Equatable {
     case preparing
     case guiding
@@ -355,7 +329,7 @@ final class EyeTestViewModel: ObservableObject {
               activeSession.currentTarget != nil {
             do {
                 phase = .recording
-                let capture = try await captureSingleAnswer(dependencies: dependencies)
+                let capture = try await captureSingleAnswer(dependencies: dependencies, session: session)
                 guard voiceFlowIsCurrent(generation) else { return }
                 guard sequentialSession?.currentIndex == activeSession.currentIndex,
                       sequentialSession?.currentTarget == activeSession.currentTarget else { return }
@@ -466,9 +440,10 @@ final class EyeTestViewModel: ObservableObject {
         case resumeCurrentTarget
     }
 
-    private func captureSingleAnswer(dependencies: AppDependencies) async throws -> SingleAnswerCapture {
+    private func captureSingleAnswer(dependencies: AppDependencies, session: AppSession) async throws -> SingleAnswerCapture {
         // Only the actual visual-response interval contributes measurement
         // samples. Network transcription and spoken retry prompts are excluded.
+        blockEvidence.beginWindow(at: Date())
         isCollectingMeasurementSamples = true
 #if DEBUG
         if dependencies.sensorCoordinator.isSimulatorVoiceAutomationEnabled {
@@ -477,6 +452,8 @@ final class EyeTestViewModel: ObservableObject {
                 throw CancellationError()
             }
             isCollectingMeasurementSamples = false
+            blockEvidence.endWindow(at: Date())
+            guard acceptCurrentAnswerEvidence(session: session) else { return positionRetry }
             guard let target = sequentialSession?.currentTarget else {
                 throw CancellationError()
             }
@@ -494,6 +471,7 @@ final class EyeTestViewModel: ObservableObject {
             throw error
         }
         isCollectingMeasurementSamples = false
+        blockEvidence.endWindow(at: Date())
         defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
 
         guard recording.adequateLevel else {
@@ -510,6 +488,7 @@ final class EyeTestViewModel: ObservableObject {
             phraseID: "landolt-single"
         )
         if let direction = response.singleDirection {
+            guard acceptCurrentAnswerEvidence(session: session) else { return positionRetry }
             return .accepted(
                 response: OptotypeResponse(direction),
                 transcript: response.transcript
@@ -518,6 +497,7 @@ final class EyeTestViewModel: ObservableObject {
         if response.valid,
            response.mode == .singleDirection,
            Self.isNotVisibleChoice(response.choice) {
+            guard acceptCurrentAnswerEvidence(session: session) else { return positionRetry }
             return .accepted(response: .notVisible, transcript: response.transcript)
         }
         return .retry(
@@ -527,11 +507,27 @@ final class EyeTestViewModel: ObservableObject {
         )
     }
 
+    private var positionRetry: SingleAnswerCapture {
+        .retry(
+            spokenPrompt: "Keep your face towards the phone at forty centimetres. Same circle. Answer again.",
+            screenMessage: "Let’s check that circle again. Keep your position steady."
+        )
+    }
+
+    private func acceptCurrentAnswerEvidence(session: AppSession) -> Bool {
+        blockEvidence.acceptWindow(
+            targetDistanceMetres: targetDistance,
+            targetToleranceMetres: DistanceGuidanceEngine.exitTolerance(for: targetDistance),
+            thresholds: session.activeSession.deviceProfile?.qualityThresholds ?? .conservative
+        )
+    }
+
     func presentOperatorInput(using dependencies: AppDependencies) {
         guard operatorEntryEnabled else { return }
         // Operator takeover is atomic: the sheet is not exposed until the live
         // recorder, speech, task, and generation have all been invalidated.
         invalidateActiveVoiceFlow(using: dependencies)
+        blockEvidence.discardPendingWindow()
         isCollectingMeasurementSamples = true
         operatorTakeoverAwaitingResolution = true
         showingOperatorInput = true

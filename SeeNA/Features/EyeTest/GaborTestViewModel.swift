@@ -359,6 +359,7 @@ final class GaborTestViewModel: ObservableObject {
 
         guard await collectRequiredAnswers(
             dependencies: dependencies,
+            session: session,
             generation: generation
         ) else {
             isCollectingMeasurementSamples = false
@@ -372,6 +373,7 @@ final class GaborTestViewModel: ObservableObject {
     /// spoken retry prompts happen outside the sensor-measurement window.
     private func collectRequiredAnswers(
         dependencies: AppDependencies,
+        session: AppSession,
         generation: UUID
     ) async -> Bool {
         var transientFailureCount = 0
@@ -389,6 +391,7 @@ final class GaborTestViewModel: ObservableObject {
             }
 
             do {
+                blockEvidence.beginWindow(at: Date())
                 isCollectingMeasurementSamples = true
                 phase = .recording
 #if DEBUG
@@ -398,6 +401,15 @@ final class GaborTestViewModel: ObservableObject {
                         return false
                     }
                     isCollectingMeasurementSamples = false
+                    blockEvidence.endWindow(at: Date())
+                    guard acceptCurrentAnswerEvidence(session: session) else {
+                        await retryCurrentTarget(
+                            "Keep your face towards the phone at forty centimetres. Same pattern. Answer again.",
+                            prompts: dependencies.spokenPrompts,
+                            generation: generation
+                        )
+                        continue
+                    }
                     guard flowIsCurrent(generation),
                           currentPatchMatches(index: expectedIndex, target: expectedTarget) else {
                         return false
@@ -418,6 +430,7 @@ final class GaborTestViewModel: ObservableObject {
 #endif
                 let recording = try await dependencies.audioRecorder.record(maximumDuration: 20)
                 isCollectingMeasurementSamples = false
+                blockEvidence.endWindow(at: Date())
                 defer { dependencies.audioRecorder.cleanup(url: recording.fileURL) }
                 guard flowIsCurrent(generation),
                       currentPatchMatches(index: expectedIndex, target: expectedTarget) else {
@@ -463,6 +476,15 @@ final class GaborTestViewModel: ObservableObject {
                     continue
                 }
 
+                guard acceptCurrentAnswerEvidence(session: session) else {
+                    await retryCurrentTarget(
+                        "Keep your face towards the phone at forty centimetres. Same pattern. Answer again.",
+                        prompts: dependencies.spokenPrompts,
+                        generation: generation
+                    )
+                    continue
+                }
+
                 guard let currentSession = sequentialSession,
                       currentSession.currentIndex == expectedIndex,
                       currentSession.currentTarget == expectedTarget else {
@@ -499,11 +521,17 @@ final class GaborTestViewModel: ObservableObject {
                     return false
                 }
                 transientFailureCount += 1
-                let recovery = transientFailureCount >= 3
-                    ? "Voice is having trouble. Keep trying, or ask a helper to tap your answer."
-                    : "Please say that answer again."
+                if transientFailureCount >= 3 || !dependencies.network.isConnected {
+                    operatorModeRequested = true
+                    isRunning = false
+                    phase = .retry("Voice is unavailable. Ask a helper to tap your answers.")
+                    _ = await dependencies.spokenPrompts.speakLocallyForTransition(
+                        "Voice is unavailable. Ask a helper to tap your answers."
+                    )
+                    return false
+                }
                 await retryCurrentTarget(
-                    recovery,
+                    "Please say that answer again.",
                     prompts: dependencies.spokenPrompts,
                     generation: generation
                 )
@@ -513,6 +541,14 @@ final class GaborTestViewModel: ObservableObject {
             }
         }
         return false
+    }
+
+    private func acceptCurrentAnswerEvidence(session: AppSession) -> Bool {
+        blockEvidence.acceptWindow(
+            targetDistanceMetres: targetDistance,
+            targetToleranceMetres: DistanceGuidanceEngine.exitTolerance(for: targetDistance),
+            thresholds: session.activeSession.deviceProfile?.qualityThresholds ?? .conservative
+        )
     }
 
     private func retryCurrentTarget(
@@ -686,6 +722,7 @@ final class GaborTestViewModel: ObservableObject {
         dependencies.spokenPrompts.stop()
         isCollectingMeasurementSamples = false
         isRunning = false
+        blockEvidence.discardPendingWindow()
         isCollectingMeasurementSamples = true
         operatorSubmissionResolved = false
         showingOperatorInput = true
@@ -715,6 +752,7 @@ final class GaborTestViewModel: ObservableObject {
             isRunning = true
             guard await collectRequiredAnswers(
                 dependencies: dependencies,
+                session: session,
                 generation: generation
             ) else {
                 isRunning = false

@@ -56,18 +56,32 @@ Record pass/fail, observed values, evidence screenshots and defects for each:
 6. Network unavailable: one retry, operator input and deterministic explanation remain usable.
 7. Quiet and deliberately noisy direction recordings: accept an expected natural response or safely repeat the same target without recording a guess.
 8. Right-eye and left-eye completion with no copied/hardcoded responses.
-9. Accessibility staircase, all four preferences and visible profile application.
+9. Single-target Landolt and Gabor tasks: answer before advancing, accept natural not-visible phrases, offer helper entry, and keep results at normal reading size.
 10. Local history across relaunch, single-session deletion and delete-all.
 11. Brightness restoration after completion, interruption and relaunch.
 12. VoiceOver labels, Dynamic Type, contrast and 44-point minimum interactive targets.
 
 Each recorded task block must contain exactly eight accepted answers. Landolt blocks must contain two targets for each of the four directions. Gabor blocks must contain four targets for each orientation. Invalid counts or unbalanced target schedules must fail integrity validation rather than being scored. These engineering checks do not confer clinical validation.
 
+### Answer-window regression checks
+
+For voice responses, test each answer separately as well as the final block:
+
+- Seven clean answers must not conceal one answer captured at the wrong distance.
+- A rejected capture must retain the current target. Its sensor frames must not contaminate the accepted retry.
+- Repeated observations of the same timestamp must be counted only once. A frozen stream, too few unique frames, or a gap exceeding the 0.5 second engineering dropout budget must reject that capture.
+- Speak continuously for longer than three seconds. Recording should wait for trailing silence, within the 12 second utterance budget. Reaching the duration limit must request another answer, not score a truncated phrase.
+- On repeated Gabor network failures, helper entry must become available without an endless spoken retry loop.
+
+Helper entry currently retains aggregate block-level sensor checks. It is not evidence of per-answer voice capture quality. The 90% condition coverage and 0.5 second dropout budget are engineering policies requiring physical usability checks, not clinically established thresholds.
+
 ## Future clinical validation
 
 The current enlarged phone Landolt task and Gabor pattern task do not support a refractive-accuracy comparison. Do not compare their outcomes with prescriptions, calculate an error in diopters, borrow accuracy figures from other products or studies, or display an accuracy percentage.
 
 Before adding numeric refractive output, define and prospectively validate a separate protocol with clinical collaborators. At a minimum, it needs a fixed and calibrated target geometry, a prespecified threshold model, an independent comparison standard, an appropriate sample, masked analysis where feasible, all outcomes retained, and prospective reporting of agreement and repeatability. The study must also address accommodation, display calibration, response variability, and clinical model error. A successful distance calibration is not a substitute for this work.
+
+See [Refraction research review](REFRACTION_RESEARCH.md) for the distinction between published phone-based refraction and the current SeeNA task.
 
 ## Release gate
 

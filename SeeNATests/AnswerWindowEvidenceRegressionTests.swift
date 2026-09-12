@@ -45,22 +45,122 @@ final class AnswerWindowEvidenceRegressionTests: XCTestCase {
         XCTAssertTrue(completeQuality.issues.contains(.multipleFaces))
     }
 
-    func testBothTasksUseBoundedPrefixPreservingEvidenceAndFailClosedOnOverflow() throws {
-        let landolt = try source(named: "SeeNA/Features/EyeTest/EyeTestViewModel.swift")
-        let gabor = try source(named: "SeeNA/Features/EyeTest/GaborTestViewModel.swift")
-
-        XCTAssertTrue(landolt.contains("static let maximumRetainedSampleCount = 16_384"))
-        XCTAssertTrue(landolt.contains("guard samples.count < Self.maximumRetainedSampleCount else"))
-        XCTAssertTrue(landolt.contains("didExceedCapacity = true"))
-        XCTAssertFalse(landolt.contains("blockSamples.removeFirst"))
-        XCTAssertFalse(gabor.contains("blockSamples.removeFirst"))
-
-        for model in [landolt, gabor] {
-            XCTAssertTrue(model.contains("blockEvidence.record(sample)"))
-            XCTAssertTrue(model.contains("samples: blockEvidence.samples"))
-            XCTAssertTrue(model.contains("blockEvidence.didExceedCapacity"))
-            XCTAssertTrue(model.contains("blockEvidence.reset(releasingCapacity: true)"))
+    func testOverflowPreservesPrefixAndResetsOnlyExplicitly() {
+        var buffer = AnswerWindowSensorEvidenceBuffer()
+        for index in 0...AnswerWindowSensorEvidenceBuffer.maximumRetainedSampleCount {
+            buffer.record(sample(timestamp: Double(index)))
         }
+        XCTAssertTrue(buffer.didExceedCapacity)
+        XCTAssertEqual(buffer.samples.count, AnswerWindowSensorEvidenceBuffer.maximumRetainedSampleCount)
+        XCTAssertEqual(buffer.samples.first?.timestamp, Date(timeIntervalSinceReferenceDate: 0))
+        buffer.discardPendingWindow()
+        XCTAssertTrue(buffer.didExceedCapacity)
+        buffer.reset(releasingCapacity: true)
+        XCTAssertTrue(buffer.samples.isEmpty)
+        XCTAssertFalse(buffer.didExceedCapacity)
+    }
+
+    func testGoodAnswersCannotConcealOneBadAnswerAndRetryCanRecover() {
+        var buffer = AnswerWindowSensorEvidenceBuffer()
+        for index in 0..<7 {
+            capture(into: &buffer, start: Double(index) * 2, distance: 0.4)
+            XCTAssertTrue(accept(&buffer))
+        }
+        let acceptedCount = buffer.samples.count
+        capture(into: &buffer, start: 14, distance: 0.6)
+        XCTAssertFalse(accept(&buffer))
+        XCTAssertEqual(buffer.samples.count, acceptedCount)
+        capture(into: &buffer, start: 16, distance: 0.4)
+        XCTAssertTrue(accept(&buffer))
+        XCTAssertEqual(buffer.samples.count, acceptedCount + 20)
+    }
+
+    func testUnacceptedAttemptDoesNotPoisonNextAttempt() {
+        var buffer = AnswerWindowSensorEvidenceBuffer()
+        capture(into: &buffer, start: 0, distance: 0.6)
+        // A failed transcription leaves the attempt unaccepted.
+        capture(into: &buffer, start: 2, distance: 0.4)
+        XCTAssertTrue(accept(&buffer))
+        XCTAssertEqual(buffer.samples.count, 20)
+    }
+
+    func testFrozenOrInterruptedSensorStreamCannotPassAWindow() {
+        for gapLocation in [0, 1, 2] {
+            var buffer = AnswerWindowSensorEvidenceBuffer()
+            buffer.beginWindow(at: Date(timeIntervalSinceReferenceDate: 0))
+            for index in 0..<20 {
+                let gap = gapLocation == 0 || (gapLocation == 1 && index >= 10) ? 2.0 : 0
+                buffer.record(sample(timestamp: Double(index) / 20 + gap))
+            }
+            buffer.endWindow(at: Date(timeIntervalSinceReferenceDate: 3))
+            XCTAssertFalse(accept(&buffer), "gap location \(gapLocation)")
+            XCTAssertTrue(buffer.samples.isEmpty)
+        }
+    }
+
+    func testMissingWindowAndEmptyEvidenceFailClosed() {
+        var buffer = AnswerWindowSensorEvidenceBuffer()
+        XCTAssertFalse(accept(&buffer))
+        buffer.beginWindow(at: Date(timeIntervalSinceReferenceDate: 0))
+        buffer.endWindow(at: Date(timeIntervalSinceReferenceDate: 1))
+        XCTAssertFalse(accept(&buffer))
+    }
+
+    func testRepeatedFramesCannotPretendToBeIndependentSamples() {
+        var buffer = AnswerWindowSensorEvidenceBuffer()
+        buffer.beginWindow(at: Date(timeIntervalSinceReferenceDate: 0))
+        for _ in 0..<20 { buffer.record(sample(timestamp: 0.2)) }
+        buffer.endWindow(at: Date(timeIntervalSinceReferenceDate: 0.4))
+        XCTAssertFalse(accept(&buffer))
+        XCTAssertTrue(buffer.samples.isEmpty)
+    }
+
+    func testTimerAndPublisherCanObserveTheSameFreshFrameWithoutRejectingAnswer() {
+        var buffer = AnswerWindowSensorEvidenceBuffer()
+        buffer.beginWindow(at: Date(timeIntervalSinceReferenceDate: 0))
+        for index in 0..<20 {
+            let frame = sample(timestamp: Double(index) / 20)
+            buffer.record(frame)
+            buffer.record(frame)
+        }
+        buffer.endWindow(at: Date(timeIntervalSinceReferenceDate: 1))
+        XCTAssertTrue(accept(&buffer))
+        XCTAssertEqual(buffer.samples.count, 20)
+    }
+
+    func testNonFiniteSensorEvidenceCannotPassQuality() {
+        for invalid in [Double.nan, .infinity, -.infinity] {
+            let samples = (0..<20).map { sample(timestamp: Double($0) / 20, trackingCoverage: invalid) }
+            let result = BlockMeasurementQualityEngine.evaluate(
+                samples: samples, targetDistanceMetres: 0.4,
+                targetToleranceMetres: 0.04, thresholds: .conservative
+            )
+            XCTAssertFalse(result.isAccepted)
+            XCTAssertTrue(result.issues.contains(.invalidEvidence))
+            XCTAssertTrue(result.trackingCoverage.isFinite)
+        }
+    }
+
+    func testNonFiniteToleranceCannotDisableDistanceGate() {
+        let result = BlockMeasurementQualityEngine.evaluate(
+            samples: (0..<20).map { sample(timestamp: Double($0) / 20) },
+            targetDistanceMetres: 0.4, targetToleranceMetres: .infinity,
+            thresholds: .conservative
+        )
+        XCTAssertFalse(result.isAccepted)
+        XCTAssertTrue(result.issues.contains(.invalidEvidence))
+    }
+
+    private func capture(into buffer: inout AnswerWindowSensorEvidenceBuffer, start: Double, distance: Double) {
+        buffer.beginWindow(at: Date(timeIntervalSinceReferenceDate: start))
+        for index in 0..<20 {
+            buffer.record(sample(timestamp: start + Double(index) / 20, distance: distance))
+        }
+        buffer.endWindow(at: Date(timeIntervalSinceReferenceDate: start + 1))
+    }
+
+    private func accept(_ buffer: inout AnswerWindowSensorEvidenceBuffer) -> Bool {
+        buffer.acceptWindow(targetDistanceMetres: 0.4, targetToleranceMetres: 0.04, thresholds: .conservative)
     }
 
     private func sample(
@@ -95,13 +195,4 @@ final class AnswerWindowEvidenceRegressionTests: XCTestCase {
         )
     }
 
-    private func source(named path: String) throws -> String {
-        let repository = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        return try String(
-            contentsOf: repository.appendingPathComponent(path),
-            encoding: .utf8
-        )
-    }
 }

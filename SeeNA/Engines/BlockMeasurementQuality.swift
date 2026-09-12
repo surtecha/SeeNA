@@ -1,6 +1,7 @@
 import Foundation
 
 enum BlockMeasurementIssue: String, Codable, Hashable, Sendable {
+    case invalidEvidence
     case insufficientSamples
     case distanceUnavailable
     case distanceOffTarget
@@ -44,7 +45,7 @@ struct BlockMeasurementQuality: Equatable, Sendable {
             switch issue {
             case .insufficientSamples, .distanceUnavailable, .distanceOffTarget, .distanceUnstable:
                 return .distanceUnstable
-            case .trackingUnreliable:
+            case .trackingUnreliable, .invalidEvidence:
                 return .trackingCoverage
             case .phoneMoved:
                 return .phoneMoved
@@ -74,9 +75,10 @@ enum BlockMeasurementQualityEngine {
         minimumConditionCoverage: Double = 0.90
     ) -> BlockMeasurementQuality {
         let requiredSamples = max(1, minimumSampleCount)
-        let requiredCoverage = min(max(minimumConditionCoverage, 0), 1)
+        let requiredCoverage = minimumConditionCoverage.isFinite
+            ? min(max(minimumConditionCoverage, 0), 1) : 1
         let validTarget = targetDistanceMetres.isFinite && targetDistanceMetres > 0
-        let tolerance = max(0, targetToleranceMetres)
+        let tolerance = targetToleranceMetres.isFinite ? max(0, targetToleranceMetres) : 0
         let count = samples.count
 
         let distances = samples.compactMap(Self.distance(from:))
@@ -90,7 +92,7 @@ enum BlockMeasurementQualityEngine {
             : 0
         let targetDistanceCoverage = coverage(targetDistanceCount, outOf: count)
         let trackingCoverage = count == 0 ? 0 : samples.reduce(0) {
-            $0 + min(max($1.trackingCoverage, 0), 1)
+            $0 + ($1.trackingCoverage.isFinite ? min(max($1.trackingCoverage, 0), 1) : 0)
         } / Double(count)
         let phoneStableCoverage = coverage(samples.filter {
             $0.phoneStable
@@ -115,6 +117,19 @@ enum BlockMeasurementQualityEngine {
         }.count, outOf: count)
 
         var issues: [BlockMeasurementIssue] = []
+        let nonnegativeLimits = [
+            thresholds.maximumAttitudeDriftDegrees, thresholds.maximumAccelerationRMS,
+            thresholds.maximumHeadYawDegrees, thresholds.maximumHeadPitchDegrees,
+            thresholds.maximumDistanceSDNearMetres, thresholds.maximumDistanceSDFarMetres
+        ]
+        let policyIsValid = targetToleranceMetres.isFinite && targetToleranceMetres >= 0
+            && minimumConditionCoverage.isFinite && (0...1).contains(minimumConditionCoverage)
+            && thresholds.minimumTrackingCoverage.isFinite
+            && (0...1).contains(thresholds.minimumTrackingCoverage)
+            && nonnegativeLimits.allSatisfy { $0.isFinite && $0 >= 0 }
+        if !policyIsValid || !samples.allSatisfy(Self.hasValidNumericEvidence) {
+            issues.append(.invalidEvidence)
+        }
         if count < requiredSamples { issues.append(.insufficientSamples) }
         if distanceCoverage < requiredCoverage || medianDistance == nil { issues.append(.distanceUnavailable) }
         if !validTarget
@@ -161,6 +176,24 @@ enum BlockMeasurementQualityEngine {
             ?? sample.rawARDistanceMetres
         guard let value, value.isFinite, value > 0 else { return nil }
         return value
+    }
+
+    private static func hasValidNumericEvidence(_ sample: DistanceSample) -> Bool {
+        let scalarValues = [sample.trackingCoverage, sample.attitudeDriftDegrees,
+                            sample.accelerationRMS, sample.headYawDegrees,
+                            sample.headPitchDegrees, sample.luminance,
+                            sample.timestamp.timeIntervalSinceReferenceDate]
+        let distances = [sample.rawARDistanceMetres, sample.relativeScaleDistanceMetres,
+                         sample.fusedDistanceMetres, sample.correctedDistanceMetres].compactMap { $0 }
+        return scalarValues.allSatisfy(\.isFinite)
+            && (0...1).contains(sample.trackingCoverage)
+            && (0...1).contains(sample.luminance)
+            && sample.attitudeDriftDegrees >= 0 && sample.accelerationRMS >= 0
+            && sample.faceCount >= 0
+            && distances.allSatisfy { $0.isFinite && $0 > 0 }
+            && sample.distanceStandardDeviation.map { $0.isFinite && $0 >= 0 } != false
+            && sample.gazeYawErrorDegrees.map(\.isFinite) != false
+            && sample.gazePitchErrorDegrees.map(\.isFinite) != false
     }
 
     /// Median absolute deviation keeps isolated AR jumps from inflating the

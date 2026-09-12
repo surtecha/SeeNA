@@ -24,7 +24,7 @@ let package = Package(
                 "Engines/GaborRenderer.swift",
                 "Engines/LandoltCRenderer.swift",
                 "Features",
-                "Networking",
+                "Networking/NetworkReachabilityService.swift",
                 "Resources",
                 "Secrets.plist",
                 "SeeNAApp.swift",
@@ -32,6 +32,8 @@ let package = Package(
             ],
             sources: [
                 "Models/DomainModels.swift",
+                "Networking/BackendClient.swift",
+                "Engines/AnswerWindowSensorEvidenceBuffer.swift",
                 "Engines/BlockMeasurementQuality.swift",
                 "Engines/DistanceGuidanceEngine.swift",
                 "Engines/FaceAlignmentEngine.swift",

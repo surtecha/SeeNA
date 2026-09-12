@@ -71,8 +71,9 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         self.recorder = recorder
         isRecording = true
 
-        let start = Date()
+        let start = ProcessInfo.processInfo.systemUptime
         var activityDetector = VoiceActivityDetector(configuration: activityConfiguration)
+        var stopReason: VoiceActivityStopReason?
 
         do {
             while recorder.isRecording {
@@ -82,9 +83,10 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
                 let decision = activityDetector.observe(
                     averagePowerDB: level,
                     peakPowerDB: recorder.peakPower(forChannel: 0),
-                    elapsed: Date().timeIntervalSince(start)
+                    elapsed: ProcessInfo.processInfo.systemUptime - start
                 )
-                if case .stop = decision {
+                if case .stop(let reason) = decision {
+                    stopReason = reason
                     recorder.stop()
                 }
                 let interval = max(activityConfiguration.sampleIntervalHint, 0.04)
@@ -110,8 +112,8 @@ final class AudioBlockRecorder: NSObject, ObservableObject {
         }
         return AudioRecordingResult(
             fileURL: fileURL,
-            adequateLevel: activityDetector.capturedPlausibleSpeech,
-            duration: Date().timeIntervalSince(start)
+            adequateLevel: activityDetector.capturedPlausibleSpeech && stopReason == .answerFinished,
+            duration: ProcessInfo.processInfo.systemUptime - start
         )
     }
 

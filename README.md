@@ -190,13 +190,15 @@ npm run check
 
 ## Verification
 
-The current release has passed:
+Latest local verification, 12 September 2026:
 
-- 178 deterministic Swift tests
+- 191 Swift tests covering measurement logic, answer evidence, voice policy, persistence and HTTP retry behaviour
 - 32 backend contract and safety tests, plus a live Luna response check
 - Debug and Release iOS 26 builds
-- A 16 of 16 simulator launch matrix across iPhone 14 through iPhone 17 and iPhone Air
-- Signed installation on a physical iPhone 16
+
+The preceding release also passed a 16 of 16 simulator launch matrix across iPhone 14 through iPhone 17 and iPhone Air, and signed installation on a physical iPhone 16. Those are historical checks, not evidence that the latest changes have completed physical sensor and microphone testing. The current candidate still needs the [physical validation checks](docs/VALIDATION.md).
+
+Voice answers are now checked against their own sensor window before being scored. Failed attempts retain the same target and do not contaminate accepted retries. Long spoken responses wait for silence within a bounded recording window, and interrupted recordings are not scored as complete answers.
 
 Run the deterministic Swift engines:
 
@@ -229,6 +231,8 @@ Continuous integration runs Swift tests, Debug and Release iOS builds, backend c
 ## Validation boundary
 
 SeeNA is built to fail safely. Simulator success cannot prove TrueDepth distance accuracy, microphone acoustics, or physical calibration. Numeric refractive output is disabled in the current release by a protocol-level lock. Exact-device calibration alone is not enough to enable it. A future numeric feature would require a separately approved, clinically validated protocol and supporting evidence, as described in [docs/VALIDATION.md](docs/VALIDATION.md).
+
+Published phone-based refraction methods are discussed in the [refraction research review](docs/REFRACTION_RESEARCH.md). They use different measurement protocols and do not establish the accuracy of SeeNA's current tasks.
 
 The current product is a non-diagnostic, qualitative vision task. It does not assess every refractive condition or eye disease, cannot rule out a vision problem, and is not a substitute for professional eye care.
 

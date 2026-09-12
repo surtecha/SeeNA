@@ -17,7 +17,7 @@ struct VoiceActivityConfiguration: Equatable, Sendable {
     var trailingSilenceDuration: TimeInterval = 0.72
     var initialSilenceTimeout: TimeInterval = 3.8
     var minimumRecordingDuration: TimeInterval = 0.85
-    var maximumUtteranceDuration: TimeInterval = 3.2
+    var maximumUtteranceDuration: TimeInterval = 12
     var noiseFloorSmoothing: Float = 0.12
 
     static let screeningAnswer = VoiceActivityConfiguration()
@@ -26,6 +26,7 @@ struct VoiceActivityConfiguration: Equatable, Sendable {
 enum VoiceActivityStopReason: Equatable, Sendable {
     case answerFinished
     case noSpeech
+    case durationLimit
 }
 
 enum VoiceActivityDecision: Equatable, Sendable {
@@ -124,7 +125,7 @@ struct VoiceActivityDetector: Sendable {
         if capturedPlausibleSpeech,
            let speechCapturedAt,
            timestamp - speechCapturedAt >= configuration.maximumUtteranceDuration {
-            return .stop(.answerFinished)
+            return .stop(.durationLimit)
         }
         if !capturedPlausibleSpeech,
            timestamp >= configuration.initialSilenceTimeout {

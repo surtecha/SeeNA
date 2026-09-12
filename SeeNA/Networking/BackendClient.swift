@@ -190,27 +190,24 @@ actor BackendClient {
     }
 
     private func sendWithSingleRetry(_ request: URLRequest) async throws -> Data {
-        var lastError: Error?
+        let policy = TranscriptionTransportPolicy.interactiveAnswer
         for attempt in 0...1 {
+            try Task.checkCancellation()
             do {
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw BackendError.invalidResponse }
                 if (200..<300).contains(http.statusCode) { return data }
-                if attempt == 0, (http.statusCode == 429 || http.statusCode >= 500) {
-                    try await Task.sleep(nanoseconds: 450_000_000)
-                    continue
+                guard policy.shouldRetry(statusCode: http.statusCode, completedAttempt: attempt) else {
+                    throw BackendError.serverStatus(http.statusCode)
                 }
-                throw BackendError.serverStatus(http.statusCode)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch {
-                lastError = error
-                if attempt == 0 {
-                    try await Task.sleep(nanoseconds: 450_000_000)
-                }
+            } catch let error as URLError {
+                guard policy.shouldRetry(urlErrorCode: error.code, completedAttempt: attempt) else { throw error }
             }
+            try await Task.sleep(nanoseconds: policy.retryDelayNanoseconds)
         }
-        throw lastError ?? BackendError.invalidResponse
+        throw BackendError.invalidResponse
     }
 
     private func sendTranscription(
